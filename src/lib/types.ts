@@ -1,31 +1,42 @@
+export type Role = "parent" | "sitter";
+
+/** Public profile at users/{uid}. Contact details live in users/{uid}/private/contact. */
 export interface UserProfile {
   uid: string;
-  email: string;
   displayName: string;
   photoURL: string | null;
-  role: "parent" | "sitter" | null;
+  role: Role | null;
   onboarded: boolean;
-  phone?: string;
   location?: string;
   bio?: string;
-  createdAt: string;
-  gender?: "male" | "female";
+  createdAt?: string;
+
+  // Sitter-only, editable by the sitter
+  services?: string[];
+  petTypes?: string[];
+  pricePerNight?: number;
+  experience?: string;
+  availability?: string[];
+  responseTime?: string;
+
+  // System-managed (Cloud Functions / admin only — rules block client writes)
+  verified?: boolean;
+  topRated?: boolean;
+  rating?: number;
+  reviewCount?: number;
+  completedStays?: number;
 }
 
-export interface SitterProfile extends UserProfile {
+export type SitterProfile = UserProfile & {
   role: "sitter";
   services: string[];
   petTypes: string[];
   pricePerNight: number;
-  experience: string;
-  availability: string[];
-  verified: boolean;
-  topRated: boolean;
-  responseTime: string;
-  acceptanceRate: number;
-  repeatClients: number;
-  totalEarnings: number;
-  totalBookings: number;
+};
+
+export interface PrivateContact {
+  email: string;
+  phone?: string;
 }
 
 export interface Pet {
@@ -36,112 +47,98 @@ export interface Pet {
   breed: string;
   age: string;
   notes: string;
-  photoURL?: string;
-  createdAt: string;
+  createdAt?: string;
 }
+
+export type BookingStatus = "pending" | "confirmed" | "declined" | "cancelled" | "completed";
+export type PaymentStatus = "pending" | "paid";
 
 export interface Booking {
   id: string;
   sitterId: string;
   sitterName: string;
+  sitterPhoto: string | null;
   parentId: string;
   parentName: string;
+  parentPhoto: string | null;
   petId: string;
   petName: string;
+  petType: string;
+  petNotes: string;
+  /** YYYY-MM-DD */
   startDate: string;
+  /** YYYY-MM-DD, check-out day */
   endDate: string;
-  status: "pending" | "confirmed" | "upcoming" | "completed" | "cancelled";
+  nights: number;
+  pricePerNight: number;
   totalPrice: number;
+  status: BookingStatus;
+  paymentStatus: PaymentStatus;
+  razorpayOrderId?: string;
   paymentId?: string;
-  paymentStatus: "pending" | "paid" | "refunded";
-  notes?: string;
-  createdAt: string;
+  notes: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
+/** Stored at reviews/{bookingId} so a stay can be reviewed only once. */
 export interface Review {
   id: string;
   sitterId: string;
   bookingId: string;
   authorId: string;
   author: string;
-  authorGender: "male" | "female";
+  authorPhoto: string | null;
   rating: number;
-  date: string;
   text: string;
   petType: string;
-  helpful: number;
   helpfulBy: string[];
   response?: string;
-  responseDate?: string;
-  createdAt: string;
+  responseAt?: string;
+  createdAt?: string;
 }
 
-export interface MonthlyInvoice {
+/** Stored at conversations/{parentId}_{sitterId}. */
+export interface Conversation {
   id: string;
+  parentId: string;
   sitterId: string;
-  month: string;
-  year: number;
-  totalEarnings: number;
-  totalBookings: number;
-  platformFee: number;
-  netPayout: number;
-  status: "paid" | "pending" | "processing";
-  lineItems: InvoiceLineItem[];
-  createdAt: string;
-}
-
-export interface InvoiceLineItem {
-  parentName: string;
-  petName: string;
-  dates: string;
-  amount: number;
-  bookingId: string;
+  participants: string[];
+  names: Record<string, string>;
+  photos: Record<string, string | null>;
+  lastMessage: string;
+  lastSenderId: string;
+  lastMessageAt?: string;
 }
 
 export interface Message {
   id: string;
-  conversationId: string;
   senderId: string;
-  senderName: string;
   text: string;
-  createdAt: string;
-  read: boolean;
+  createdAt?: string;
 }
 
-export interface Conversation {
-  id: string;
-  participants: string[];
-  participantNames: Record<string, string>;
-  participantPhotos: Record<string, string | null>;
-  lastMessage: string;
-  lastMessageTime: string;
-  unreadCount: Record<string, number>;
-  sitterId: string;
-  parentId: string;
-}
+export type PostCategory = "tip" | "question" | "story";
 
 export interface CommunityPost {
   id: string;
   authorId: string;
   author: string;
-  authorRole: "parent" | "sitter";
-  authorGender: "male" | "female";
-  category: "tip" | "question" | "experience" | "general";
+  authorPhoto: string | null;
+  authorRole: Role;
+  category: PostCategory;
   title: string;
   text: string;
-  tags: string[];
-  likes: number;
   likedBy: string[];
   commentCount: number;
-  createdAt: string;
+  createdAt?: string;
 }
 
 export interface CommunityComment {
   id: string;
-  postId: string;
   authorId: string;
   author: string;
-  authorGender: "male" | "female";
+  authorPhoto: string | null;
   text: string;
-  createdAt: string;
+  createdAt?: string;
 }

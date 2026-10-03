@@ -1,202 +1,130 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import {
   onAuthStateChanged,
   signInWithPopup,
+  signInWithCredential,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
-  signOut as firebaseSignOut,
-  updateProfile,
-  User,
+  signOut as fbSignOut,
+  updateProfile as fbUpdateProfile,
+  GoogleAuthProvider,
+  type User,
 } from "firebase/auth";
-import { auth, googleProvider } from "@/lib/firebase";
-
-export type UserRole = "parent" | "sitter" | null;
-
-export interface UserProfile {
-  uid: string;
-  email: string;
-  displayName: string;
-  photoURL: string | null;
-  role: UserRole;
-  onboarded: boolean;
-  phone?: string;
-  location?: string;
-  bio?: string;
-  gender?: "male" | "female";
-}
+import { Capacitor } from "@capacitor/core";
+import { auth, isFirebaseConfigured } from "./firebase";
+import { ensureProfile, getProfile, updateProfile, type EditableProfile } from "./db";
+import type { UserProfile } from "./types";
 
 interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
   loading: boolean;
   signInWithGoogle: () => Promise<void>;
-  signUpWithEmail: (email: string, password: string, name: string) => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
+  signUpWithEmail: (email: string, password: string, name: string) => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
-  setRole: (role: UserRole) => void;
-  completeOnboarding: () => void;
-  updateProfileData: (data: Partial<UserProfile>) => void;
+  saveProfile: (data: Partial<EditableProfile>) => Promise<void>;
   refreshProfile: () => Promise<void>;
-  authFetch: (url: string, init?: RequestInit) => Promise<Response>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-// Firestore-backed profile operations
-async function fetchProfile(uid: string): Promise<UserProfile | null> {
-  try {
-    const res = await fetch(`/api/users?uid=${uid}`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!data || !data.uid) return null;
-    return {
-      uid: data.uid,
-      email: data.email || "",
-      displayName: data.displayName || "",
-      photoURL: data.photoURL || null,
-      role: data.role || null,
-      onboarded: data.onboarded || false,
-      phone: data.phone,
-      location: data.location,
-      bio: data.bio,
-      gender: data.gender,
-    };
-  } catch {
-    return null;
-  }
-}
+const WEB_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_WEB_CLIENT_ID || "";
 
-async function saveProfile(profile: UserProfile) {
-  try {
-    await fetch("/api/users", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(profile),
-    });
-  } catch (e) {
-    console.error("Failed to save profile:", e);
+let nativeGoogleReady: Promise<void> | null = null;
+async function nativeGoogle() {
+  const { SocialLogin } = await import("@capgo/capacitor-social-login");
+  if (!nativeGoogleReady) {
+    if (!WEB_CLIENT_ID) throw new Error("Google sign-in is not configured (NEXT_PUBLIC_GOOGLE_WEB_CLIENT_ID).");
+    nativeGoogleReady = SocialLogin.initialize({ google: { webClientId: WEB_CLIENT_ID } });
   }
+  await nativeGoogleReady;
+  return SocialLogin;
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const refreshProfile = useCallback(async () => {
-    if (!user) return;
-    const fetched = await fetchProfile(user.uid);
-    if (fetched) setProfile(fetched);
-  }, [user]);
+  const [loading, setLoading] = useState(isFirebaseConfigured);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setUser(firebaseUser);
-      if (firebaseUser) {
-        let existing = await fetchProfile(firebaseUser.uid);
-        if (!existing) {
-          existing = {
-            uid: firebaseUser.uid,
-            email: firebaseUser.email || "",
-            displayName: firebaseUser.displayName || "",
-            photoURL: firebaseUser.photoURL,
-            role: null,
-            onboarded: false,
-          };
-          await saveProfile(existing);
+    if (!isFirebaseConfigured) return;
+    return onAuthStateChanged(auth(), async (u) => {
+      setUser(u);
+      if (u) {
+        try {
+          setProfile(await ensureProfile(u));
+        } catch (e) {
+          console.error("Could not load profile", e);
+          setProfile(null);
         }
-        setProfile(existing);
       } else {
         setProfile(null);
       }
       setLoading(false);
     });
-    return unsubscribe;
   }, []);
 
+  const refreshProfile = useCallback(async () => {
+    const u = auth().currentUser;
+    if (u) setProfile(await getProfile(u.uid));
+  }, []);
 
-
-  const signInWithGoogle = async () => {
-    const result = await signInWithPopup(auth, googleProvider);
-    let existing = await fetchProfile(result.user.uid);
-    if (!existing) {
-      existing = {
-        uid: result.user.uid,
-        email: result.user.email || "",
-        displayName: result.user.displayName || "",
-        photoURL: result.user.photoURL,
-        role: null,
-        onboarded: false,
-      };
-      await saveProfile(existing);
+  const signInWithGoogle = useCallback(async () => {
+    if (Capacitor.isNativePlatform()) {
+      const SocialLogin = await nativeGoogle();
+      const res = await SocialLogin.login({ provider: "google", options: { scopes: ["email", "profile"] } });
+      const idToken = res.result && "idToken" in res.result ? res.result.idToken : null;
+      if (!idToken) throw new Error("Google did not return an ID token.");
+      await signInWithCredential(auth(), GoogleAuthProvider.credential(idToken));
+    } else {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
+      await signInWithPopup(auth(), provider);
     }
-    setProfile(existing);
-  };
+  }, []);
 
-  const signUpWithEmail = async (email: string, password: string, name: string) => {
-    const result = await createUserWithEmailAndPassword(auth, email, password);
-    await updateProfile(result.user, { displayName: name });
-    const newProfile: UserProfile = {
-      uid: result.user.uid,
-      email,
-      displayName: name,
-      photoURL: null,
-      role: null,
-      onboarded: false,
-    };
-    await saveProfile(newProfile);
-    setProfile(newProfile);
-  };
+  const signInWithEmail = useCallback(async (email: string, password: string) => {
+    await signInWithEmailAndPassword(auth(), email, password);
+  }, []);
 
-  const signInWithEmail = async (email: string, password: string) => {
-    await signInWithEmailAndPassword(auth, email, password);
-  };
+  const signUpWithEmail = useCallback(async (email: string, password: string, name: string) => {
+    const res = await createUserWithEmailAndPassword(auth(), email, password);
+    await fbUpdateProfile(res.user, { displayName: name });
+    // onAuthStateChanged fired before the display name existed; write it now.
+    const p = await ensureProfile({ ...res.user, displayName: name });
+    if (p.displayName !== name) await updateProfile(res.user.uid, { displayName: name });
+    setProfile({ ...p, displayName: name });
+  }, []);
 
-  const resetPassword = async (email: string) => {
-    await sendPasswordResetEmail(auth, email);
-  };
+  const resetPassword = useCallback(async (email: string) => {
+    await sendPasswordResetEmail(auth(), email);
+  }, []);
 
-  const signOut = async () => {
-    await firebaseSignOut(auth);
-    setUser(null);
-    setProfile(null);
-  };
-
-  const setRole = (role: UserRole) => {
-    if (profile) {
-      const updated = { ...profile, role };
-      setProfile(updated);
-      saveProfile(updated);
+  const signOut = useCallback(async () => {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const SocialLogin = await nativeGoogle();
+        await SocialLogin.logout({ provider: "google" });
+      } catch {
+        /* not signed in with Google */
+      }
     }
-  };
+    await fbSignOut(auth());
+  }, []);
 
-  const completeOnboarding = () => {
-    if (profile) {
-      const updated = { ...profile, onboarded: true };
-      setProfile(updated);
-      saveProfile(updated);
-    }
-  };
-
-  const updateProfileData = (data: Partial<UserProfile>) => {
-    if (profile) {
-      const updated = { ...profile, ...data };
-      setProfile(updated);
-      saveProfile(updated);
-    }
-  };
-
-  const authFetch = useCallback(async (url: string, init?: RequestInit): Promise<Response> => {
-    if (!user) throw new Error("Not authenticated");
-    const token = await user.getIdToken();
-    const headers = new Headers(init?.headers);
-    headers.set("Authorization", `Bearer ${token}`);
-    return fetch(url, { ...init, headers });
-  }, [user]);
+  const saveProfile = useCallback(
+    async (data: Partial<EditableProfile>) => {
+      if (!user) throw new Error("Not signed in");
+      await updateProfile(user.uid, data);
+      setProfile((p) => (p ? { ...p, ...data } : p));
+    },
+    [user]
+  );
 
   return (
     <AuthContext.Provider
@@ -205,15 +133,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         profile,
         loading,
         signInWithGoogle,
-        signUpWithEmail,
         signInWithEmail,
+        signUpWithEmail,
         resetPassword,
         signOut,
-        setRole,
-        completeOnboarding,
-        updateProfileData,
+        saveProfile,
         refreshProfile,
-        authFetch,
       }}
     >
       {children}
@@ -222,7 +147,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 }
 
 export function useAuth() {
-  const context = useContext(AuthContext);
-  if (!context) throw new Error("useAuth must be used within AuthProvider");
-  return context;
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  return ctx;
+}
+
+/** Turns Firebase error codes into sentences a person can act on. */
+export function authErrorMessage(e: unknown): string {
+  const code = (e as { code?: string })?.code ?? "";
+  const map: Record<string, string> = {
+    "auth/invalid-credential": "That email and password don't match.",
+    "auth/wrong-password": "That email and password don't match.",
+    "auth/user-not-found": "No account with that email yet.",
+    "auth/email-already-in-use": "An account with this email already exists. Try signing in.",
+    "auth/weak-password": "Use at least 6 characters for your password.",
+    "auth/invalid-email": "That doesn't look like an email address.",
+    "auth/popup-closed-by-user": "Sign-in was cancelled.",
+    "auth/network-request-failed": "No connection. Check your internet and try again.",
+    "auth/too-many-requests": "Too many attempts. Wait a minute and try again.",
+  };
+  if (map[code]) return map[code];
+  const msg = (e as Error)?.message || "";
+  if (/cancel/i.test(msg)) return "Sign-in was cancelled.";
+  return msg || "Something went wrong. Please try again.";
 }

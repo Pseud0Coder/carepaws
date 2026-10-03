@@ -2,182 +2,176 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-@theme inline {
-  /* Muted, grounded palette */
-  --color-background: #f5f4f0;
-  --color-foreground: #2c2c2c;
-  --color-surface: #ffffff;
-  --color-surface-alt: #f9f8f6;
-  --color-border: #e8e6e1;
-  --color-border-subtle: #f0eeea;
-
-  /* Primary: Muted slate blue */
-  --color-primary-50: #f0f4f7;
-  --color-primary-100: #dce5ed;
-  --color-primary-200: #b8cadb;
-  --color-primary-300: #8eaac4;
-  --color-primary-400: #6b8fae;
-  --color-primary-500: #5b7a8a;
-  --color-primary-600: #4a6575;
-  --color-primary-700: #3d5361;
-  --color-primary-800: #334550;
-  --color-primary-900: #2a3840;
-
-  /* Accent: Muted sage */
-  --color-accent-50: #f2f5f2;
-  --color-accent-100: #e1e8e1;
-  --color-accent-200: #c2d1c2;
-  --color-accent-300: #9db59d;
-  --color-accent-400: #7a9a7a;
-  --color-accent-500: #5f8060;
-  --color-accent-600: #4d6a4e;
-  --color-accent-700: #3e5640;
-  --color-accent-800: #334735;
-  --color-accent-900: #2a3b2c;
-
-  /* Warm: Muted amber */
-  --color-warm-50: #faf6f0;
-  --color-warm-100: #f3ead9;
-  --color-warm-200: #e8d5b3;
-  --color-warm-300: #d4b87a;
-  --color-warm-400: #c4a055;
-  --color-warm-500: #b08a3e;
-  --color-warm-600: #967232;
-  --color-warm-700: #7a5c2a;
-  --color-warm-800: #634b25;
-  --color-warm-900: #503e22;
-
-  /* Text hierarchy */
-  --color-text-primary: #2c2c2c;
-  --color-text-secondary: #6b6b6b;
-  --color-text-tertiary: #999999;
-  --color-text-inverse: #f5f4f0;
-
-  /* Status: Muted, not alarming */
-  --color-success: #5f8060;
-  --color-success-bg: #f2f5f2;
-  --color-warning: #b08a3e;
-  --color-warning-bg: #faf6f0;
-  --color-error: #b05050;
-  --color-error-bg: #faf2f2;
-  --color-info: #5b7a8a;
-  --color-info-bg: #f0f4f7;
-
-  /* Shadows: Material-inspired elevation */
-  --shadow-xs: 0 1px 2px rgba(0,0,0,0.04);
-  --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
-  --shadow-md: 0 4px 6px rgba(0,0,0,0.05), 0 2px 4px rgba(0,0,0,0.04);
-  --shadow-lg: 0 10px 15px rgba(0,0,0,0.05), 0 4px 6px rgba(0,0,0,0.04);
-  --shadow-xl: 0 20px 25px rgba(0,0,0,0.06), 0 8px 10px rgba(0,0,0,0.04);
-
-  --font-sans: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
-}
-
-/* Dark mode tokens */
-:root.dark {
-  --color-background: #1a1a1a;
-  --color-foreground: #e8e6e1;
-  --color-surface: #252525;
-  --color-surface-alt: #2a2a2a;
-  --color-border: #3a3a3a;
-  --color-border-subtle: #333333;
-
-  --color-text-primary: #e8e6e1;
-  --color-text-secondary: #a0a0a0;
-  --color-text-tertiary: #707070;
-  --color-text-inverse: #1a1a1a;
-
-  --color-primary-50: #1e2a30;
-  --color-primary-100: #253540;
-  --color-primary-200: #2d4250;
-  --color-primary-300: #3d5361;
-  --color-primary-400: #5b7a8a;
-  --color-primary-500: #6b8fae;
-  --color-primary-600: #8eaac4;
-  --color-primary-700: #a8c0d4;
-  --color-primary-800: #c0d4e4;
-  --color-primary-900: #d8e8f0;
-
-  --color-accent-50: #1e2520;
-  --color-accent-100: #253025;
-  --color-accent-200: #2d3d2d;
-  --color-accent-300: #3e5640;
-  --color-accent-400: #5f8060;
-  --color-accent-500: #7a9a7a;
-  --color-accent-600: #9db59d;
-  --color-accent-700: #b5c8b5;
-  --color-accent-800: #c8d8c8;
-  --color-accent-900: #dce8dc;
-
-  --color-warm-50: #252018;
-  --color-warm-100: #302a1e;
-  --color-warm-200: #3d3525;
-  --color-warm-300: #503e22;
-  --color-warm-400: #967232;
-  --color-warm-500: #b08a3e;
-  --color-warm-600: #c4a055;
-  --color-warm-700: #d4b87a;
-  --color-warm-800: #e8d5b3;
-  --color-warm-900: #f3ead9;
-
-  --color-success: #7a9a7a;
-  --color-success-bg: #1e2520;
-  --color-warning: #c4a055;
-  --color-warning-bg: #252018;
-  --color-error: #c07070;
-  --color-error-bg: #2a1818;
-  --color-info: #6b8fae;
-  --color-info-bg: #1e2a30;
-
-  --shadow-xs: 0 1px 2px rgba(0,0,0,0.2);
-  --shadow-sm: 0 1px 3px rgba(0,0,0,0.25), 0 1px 2px rgba(0,0,0,0.2);
-  --shadow-md: 0 4px 6px rgba(0,0,0,0.25), 0 2px 4px rgba(0,0,0,0.2);
-  --shadow-lg: 0 10px 15px rgba(0,0,0,0.25), 0 4px 6px rgba(0,0,0,0.2);
-  --shadow-xl: 0 20px 25px rgba(0,0,0,0.3), 0 8px 10px rgba(0,0,0,0.2);
-}
-
+/*
+ * CarePaws — "Field & Hearth" palette.
+ * Drawn from natural materials: linen, oat, moss, clay, bark and river stone.
+ * Tokens are plain CSS variables so light/dark swap at runtime; Tailwind
+ * utilities (bg-linen, text-moss …) map onto them through @theme inline.
+ */
 :root {
-  color-scheme: light dark;
+  --linen: #f3eee5;        /* app background */
+  --paper: #fbf8f3;        /* raised surfaces */
+  --oat: #e8dfcf;          /* sunken / chips */
+  --oat-deep: #d9cdb8;     /* borders, dividers */
+  --bark: #2a251f;         /* primary text */
+  --bark-soft: #5c5348;    /* secondary text */
+  --stone: #8b8275;        /* tertiary text */
+  --moss: #4d5e44;         /* primary action */
+  --moss-deep: #3a4834;
+  --moss-tint: #dfe5d6;
+  --clay: #b5694a;         /* warm accent */
+  --clay-tint: #f1dccf;
+  --river: #5d7a80;        /* info / cool accent */
+  --river-tint: #dbe5e5;
+  --honey: #b98a3a;        /* ratings, pending */
+  --honey-tint: #f2e6cc;
+  --ember: #a5483b;        /* errors */
+  --ember-tint: #f3d9d4;
+  --on-moss: #f6f3ec;
+  --shadow-color: 43 32% 18%;
+}
+
+:root.dark {
+  --linen: #171512;
+  --paper: #211e1a;
+  --oat: #2c2823;
+  --oat-deep: #3b362f;
+  --bark: #ece5d8;
+  --bark-soft: #bdb3a4;
+  --stone: #8b8275;
+  --moss: #a7b98f;
+  --moss-deep: #c3d2ad;
+  --moss-tint: #2b3326;
+  --clay: #d9906f;
+  --clay-tint: #3a2a22;
+  --river: #93b1b6;
+  --river-tint: #22302f;
+  --honey: #d8af64;
+  --honey-tint: #352c1c;
+  --ember: #de8476;
+  --ember-tint: #3a2220;
+  --on-moss: #171512;
+  --shadow-color: 0 0% 0%;
+}
+
+@theme inline {
+  --color-linen: var(--linen);
+  --color-paper: var(--paper);
+  --color-oat: var(--oat);
+  --color-oat-deep: var(--oat-deep);
+  --color-bark: var(--bark);
+  --color-bark-soft: var(--bark-soft);
+  --color-stone: var(--stone);
+  --color-moss: var(--moss);
+  --color-moss-deep: var(--moss-deep);
+  --color-moss-tint: var(--moss-tint);
+  --color-clay: var(--clay);
+  --color-clay-tint: var(--clay-tint);
+  --color-river: var(--river);
+  --color-river-tint: var(--river-tint);
+  --color-honey: var(--honey);
+  --color-honey-tint: var(--honey-tint);
+  --color-ember: var(--ember);
+  --color-ember-tint: var(--ember-tint);
+  --color-on-moss: var(--on-moss);
+
+  --font-sans: var(--font-body), system-ui, sans-serif;
+  --font-display: var(--font-display), Georgia, serif;
+
+  --shadow-soft: 0 1px 2px hsl(var(--shadow-color) / 0.06), 0 4px 14px hsl(var(--shadow-color) / 0.06);
+  --shadow-lift: 0 2px 4px hsl(var(--shadow-color) / 0.08), 0 12px 32px hsl(var(--shadow-color) / 0.12);
+
+  --radius-card: 1.25rem;
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+  color-scheme: light;
+}
+html.dark {
+  color-scheme: dark;
 }
 
 body {
-  background: var(--color-background);
-  color: var(--color-foreground);
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  background: var(--linen);
+  color: var(--bark);
+  overscroll-behavior-y: none;
+}
+
+/* Subtle paper grain so flat fills read as material, not plastic. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.35;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.3 0 0 0 0 0.25 0 0 0 0 0.2 0 0 0 .05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 ::selection {
-  background-color: var(--color-primary-200);
-  color: var(--color-foreground);
+  background: var(--moss-tint);
 }
 
-/* Material-inspired transitions */
-* {
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-/* Scrollbar styling */
-::-webkit-scrollbar {
-  width: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-tertiary);
-}
-
-/* Focus ring */
 :focus-visible {
-  outline: 2px solid var(--color-primary-400);
+  outline: 2px solid var(--moss);
   outline-offset: 2px;
-  border-radius: 4px;
+}
+
+.pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-rise {
+  animation: rise 0.35s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.animate-sheet {
+  animation: sheet-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.animate-fade {
+  animation: fade-in 0.2s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise,
+  .animate-sheet,
+  .animate-fade {
+    animation: none;
+  }
 }

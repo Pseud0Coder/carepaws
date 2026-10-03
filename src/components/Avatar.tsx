@@ -1,117 +1,56 @@
-import Image from "next/image";
-import { User, Users } from "lucide-react";
+/* eslint-disable @next/next/no-img-element -- static export: no image optimizer */
+import { cn } from "@/lib/cn";
 
-type AvatarSize = "sm" | "md" | "lg" | "xl";
+const sizes = {
+  xs: "h-7 w-7 text-[11px]",
+  sm: "h-9 w-9 text-xs",
+  md: "h-11 w-11 text-sm",
+  lg: "h-16 w-16 text-lg",
+  xl: "h-24 w-24 text-2xl",
+} as const;
 
-const sizeClasses: Record<AvatarSize, string> = {
-  sm: "h-8 w-8 text-xs",
-  md: "h-10 w-10 text-sm",
-  lg: "h-14 w-14 text-base",
-  xl: "h-20 w-20 text-xl",
-};
+// Earthy tints, picked deterministically from the name so a person keeps their colour.
+const tones = [
+  "bg-moss-tint text-moss",
+  "bg-clay-tint text-clay",
+  "bg-river-tint text-river",
+  "bg-honey-tint text-honey",
+];
 
-const iconSizes: Record<AvatarSize, number> = {
-  sm: 14,
-  md: 16,
-  lg: 20,
-  xl: 28,
-};
-
-interface AvatarProps {
-  src?: string | null;
-  name?: string;
-  gender?: "male" | "female" | "neutral";
-  size?: AvatarSize;
-  className?: string;
-  bgColor?: string;
+function initials(name: string) {
+  const parts = name.replace(/^dr\.?\s+/i, "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "·";
+  return ((parts[0][0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
 }
 
-function getInitials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0][0].toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
-function getGenderColor(gender: "male" | "female" | "neutral"): string {
-  switch (gender) {
-    case "female":
-      return "bg-primary-50 text-primary-600";
-    case "male":
-      return "bg-accent-50 text-accent-600";
-    default:
-      return "bg-warm-50 text-warm-600";
-  }
-}
-
-function getGenderIcon(
-  gender: "male" | "female" | "neutral",
-  size: number
-) {
-  switch (gender) {
-    case "female":
-      return (
-        <User
-          className="text-primary-400"
-          style={{ width: size, height: size }}
-        />
-      );
-    case "male":
-      return (
-        <User
-          className="text-accent-400"
-          style={{ width: size, height: size }}
-        />
-      );
-    default:
-      return (
-        <Users
-          className="text-warm-400"
-          style={{ width: size, height: size }}
-        />
-      );
-  }
+function hash(s: string) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
 }
 
 export default function Avatar({
   src,
   name = "",
-  gender = "neutral",
   size = "md",
-  className = "",
-  bgColor,
-}: AvatarProps) {
-  const sizeClass = sizeClasses[size];
-  const iconSize = iconSizes[size];
-
+  className,
+}: {
+  src?: string | null;
+  name?: string;
+  size?: keyof typeof sizes;
+  className?: string;
+}) {
+  const base = cn("relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full font-semibold", sizes[size], className);
   if (src) {
     return (
-      <Image
-        src={src}
-        alt={name}
-        width={iconSize * 2}
-        height={iconSize * 2}
-        className={`${sizeClass} rounded-full object-cover ring-2 ring-surface ${className}`}
-      />
+      <span className={base}>
+        <img src={src} alt={name} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+      </span>
     );
   }
-
-  if (name) {
-    return (
-      <div
-        className={`${sizeClass} rounded-full flex items-center justify-center font-semibold ring-2 ring-surface ${getGenderColor(gender)} ${className}`}
-        style={bgColor ? { backgroundColor: bgColor } : undefined}
-      >
-        {getInitials(name)}
-      </div>
-    );
-  }
-
   return (
-    <div
-      className={`${sizeClass} rounded-full flex items-center justify-center ring-2 ring-surface ${getGenderColor(gender)} ${className}`}
-    >
-      {getGenderIcon(gender, iconSize)}
-    </div>
+    <span className={cn(base, tones[hash(name) % tones.length])} aria-label={name}>
+      {initials(name)}
+    </span>
   );
 }

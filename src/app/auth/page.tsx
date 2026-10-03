@@ -1,216 +1,176 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { PawPrint, Mail, Lock, User, Eye, EyeOff, ArrowRight } from "lucide-react";
-import { useAuth } from "@/lib/auth-context";
+import { Suspense, useEffect, useState, type FormEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { PawPrint } from "lucide-react";
+import { authErrorMessage, useAuth } from "@/lib/auth-context";
+import { AppBar, Button, ErrorNote, Field, Input, useToast } from "@/components/ui";
 
-export default function AuthPage() {
+type Mode = "signin" | "signup" | "reset";
+
+function GoogleMark() {
+  return (
+    <svg viewBox="0 0 48 48" className="h-5 w-5" aria-hidden>
+      <path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.6-.4-3.9z" />
+      <path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
+      <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z" />
+      <path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.6-.4-3.9z" />
+    </svg>
+  );
+}
+
+function AuthScreen() {
+  const { user, profile, loading, signInWithGoogle, signInWithEmail, signUpWithEmail, resetPassword } = useAuth();
   const router = useRouter();
-  const { signInWithGoogle, signUpWithEmail, signInWithEmail, resetPassword, profile } = useAuth();
-  const [mode, setMode] = useState<"login" | "signup">("login");
+  const params = useSearchParams();
+  const toast = useToast();
+  const [mode, setMode] = useState<Mode>(params.get("mode") === "signup" ? "signup" : "signin");
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
+  const [busy, setBusy] = useState<"google" | "email" | null>(null);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [resetSent, setResetSent] = useState(false);
 
-  // If already logged in and onboarded, redirect
-  if (profile?.onboarded) {
-    router.push("/dashboard");
-    return null;
-  }
+  // Only allow in-app relative paths as a post-login destination.
+  const nextParam = params.get("next");
+  const next = nextParam && nextParam.startsWith("/") && !nextParam.startsWith("//") ? nextParam : "/";
 
-  const handleGoogle = async () => {
+  useEffect(() => {
+    if (loading || !user || !profile) return;
+    router.replace(profile.onboarded ? next : "/onboarding/");
+  }, [loading, user, profile, next, router]);
+
+  async function google() {
     setError("");
-    setLoading(true);
+    setBusy("google");
     try {
       await signInWithGoogle();
-      router.push("/onboarding");
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to sign in with Google";
-      setError(msg);
+    } catch (e) {
+      setError(authErrorMessage(e));
     } finally {
-      setLoading(false);
+      setBusy(null);
     }
-  };
+  }
 
-  const handleEmailSubmit = async (e: React.FormEvent) => {
+  async function submit(e: FormEvent) {
     e.preventDefault();
     setError("");
-    setLoading(true);
+    setBusy("email");
     try {
-      if (mode === "signup") {
-        await signUpWithEmail(email, password, name);
-        router.push("/onboarding");
+      if (mode === "signin") await signInWithEmail(email, password);
+      else if (mode === "signup") {
+        if (name.trim().length < 2) throw new Error("Please tell us your name.");
+        await signUpWithEmail(email, password, name.trim());
       } else {
-        await signInWithEmail(email, password);
-        if (profile?.onboarded) {
-          router.push("/dashboard");
-        } else {
-          router.push("/onboarding");
-        }
+        await resetPassword(email);
+        toast("Check your inbox for a reset link.");
+        setMode("signin");
       }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Something went wrong";
-      setError(
-        msg.includes("auth/email-already-in-use")
-          ? "An account with this email already exists."
-          : msg.includes("auth/invalid-credential") || msg.includes("auth/wrong-password")
-          ? "Invalid email or password."
-          : msg.includes("auth/weak-password")
-          ? "Password must be at least 6 characters."
-          : msg
-      );
+    } catch (e) {
+      setError(authErrorMessage(e));
     } finally {
-      setLoading(false);
+      setBusy(null);
     }
-  };
+  }
 
-  const handleResetPassword = async () => {
-    if (!email) {
-      setError("Enter your email address first.");
-      return;
-    }
-    setError("");
-    try {
-      await resetPassword(email);
-      setResetSent(true);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to send reset email";
-      setError(msg);
-    }
+  const titles: Record<Mode, [string, string]> = {
+    signin: ["Welcome back", "Sign in to see your stays and messages."],
+    signup: ["Join CarePaws", "Find a sitter you trust, or become one."],
+    reset: ["Reset password", "We'll email you a link to set a new one."],
   };
 
   return (
-    <div className="flex min-h-[calc(100vh-8rem)] items-center justify-center px-6 py-12">
-      <div className="w-full max-w-md">
-        {/* Header */}
-        <div className="text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-500">
-            <PawPrint className="h-7 w-7 text-white" />
+    <div className="flex min-h-dvh flex-col">
+      <AppBar back transparent />
+      <main className="flex flex-1 flex-col px-6 pb-10">
+        <div className="mt-2 mb-8">
+          <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-moss text-on-moss shadow-soft">
+            <PawPrint className="h-7 w-7" />
           </div>
-          <h1 className="mt-5 text-2xl font-bold text-foreground">
-            {mode === "login" ? "Welcome back" : "Join CarePaws"}
-          </h1>
-          <p className="mt-2 text-sm text-text-tertiary">
-            {mode === "login"
-              ? "Sign in to manage your bookings and pets"
-              : "Create an account to find trusted pet sitters"}
-          </p>
+          <h1 className="font-display text-[32px] leading-tight text-bark">{titles[mode][0]}</h1>
+          <p className="mt-2 text-bark-soft">{titles[mode][1]}</p>
         </div>
 
-        {/* Google Sign-In */}
-        <button
-          onClick={handleGoogle}
-          disabled={loading}
-          className="mt-8 flex w-full items-center justify-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-sm font-medium text-foreground transition-all hover:bg-surface-alt active:scale-[0.98] disabled:opacity-50"
-        >
-          <svg className="h-5 w-5" viewBox="0 0 24 24">
-            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4" />
-            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
-            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
-            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
-          </svg>
-          Continue with Google
-        </button>
-
-        {/* Divider */}
-        <div className="relative my-6">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-border" />
-          </div>
-          <div className="relative flex justify-center text-xs">
-            <span className="bg-background px-3 text-text-tertiary">or continue with email</span>
-          </div>
-        </div>
-
-        {/* Email Form */}
-        <form onSubmit={handleEmailSubmit} className="space-y-4">
-          {mode === "signup" && (
-            <div className="relative">
-              <User className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" />
-              <input
-                type="text"
-                placeholder="Full name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-                className="w-full rounded-lg border border-border bg-surface py-3 pl-10 pr-4 text-sm text-foreground placeholder:text-text-tertiary focus:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-100"
-              />
+        {mode !== "reset" && (
+          <>
+            <Button variant="secondary" size="lg" block onClick={google} loading={busy === "google"} disabled={!!busy}>
+              {busy !== "google" && <GoogleMark />}
+              Continue with Google
+            </Button>
+            <div className="my-6 flex items-center gap-3 text-xs font-medium tracking-wide text-stone uppercase">
+              <span className="h-px flex-1 bg-oat-deep" />
+              or with email
+              <span className="h-px flex-1 bg-oat-deep" />
             </div>
+          </>
+        )}
+
+        <form onSubmit={submit} className="space-y-4">
+          {mode === "signup" && (
+            <Field label="Your name">
+              <Input value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" required />
+            </Field>
           )}
-          <div className="relative">
-            <Mail className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" />
-            <input
+          <Field label="Email">
+            <Input
               type="email"
-              placeholder="Email address"
+              inputMode="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
               required
-              className="w-full rounded-lg border border-border bg-surface py-3 pl-10 pr-4 text-sm text-foreground placeholder:text-text-tertiary focus:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-100"
             />
-          </div>
-          <div className="relative">
-            <Lock className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" />
-            <input
-              type={showPassword ? "text" : "password"}
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              minLength={6}
-              className="w-full rounded-lg border border-border bg-surface py-3 pl-10 pr-11 text-sm text-foreground placeholder:text-text-tertiary focus:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-100"
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3.5 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary"
-            >
-              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            </button>
-          </div>
-
-          {error && (
-            <p className="rounded-lg bg-error-bg px-3 py-2 text-xs text-error">{error}</p>
+          </Field>
+          {mode !== "reset" && (
+            <Field label="Password" hint={mode === "signup" ? "At least 6 characters." : undefined}>
+              <Input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                minLength={6}
+                required
+              />
+            </Field>
           )}
-
-          {mode === "login" && (
-            <button
-              type="button"
-              onClick={handleResetPassword}
-              className="text-xs font-medium text-primary-500 hover:text-primary-600"
-            >
-              {resetSent ? "Reset email sent. Check your inbox." : "Forgot password?"}
-            </button>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary-500 py-3 text-sm font-medium text-white transition-all hover:bg-primary-600 active:scale-[0.98] disabled:opacity-50"
-          >
-            {loading ? "Please wait..." : mode === "login" ? "Sign In" : "Create Account"}
-            {!loading && <ArrowRight className="h-4 w-4" />}
-          </button>
+          <ErrorNote>{error}</ErrorNote>
+          <Button type="submit" size="lg" block loading={busy === "email"} disabled={!!busy}>
+            {mode === "signin" ? "Sign in" : mode === "signup" ? "Create account" : "Send reset link"}
+          </Button>
         </form>
 
-        {/* Toggle */}
-        <p className="mt-6 text-center text-sm text-text-tertiary">
-          {mode === "login" ? "Don't have an account?" : "Already have an account?"}{" "}
-          <button
-            onClick={() => {
-              setMode(mode === "login" ? "signup" : "login");
-              setError("");
-            }}
-            className="font-medium text-foreground hover:text-primary-500"
-          >
-            {mode === "login" ? "Sign up" : "Sign in"}
-          </button>
-        </p>
-      </div>
+        <div className="mt-6 space-y-3 text-center text-sm text-bark-soft">
+          {mode === "signin" && (
+            <>
+              <button className="font-semibold text-moss" onClick={() => setMode("reset")}>
+                Forgot password?
+              </button>
+              <p>
+                New here?{" "}
+                <button className="font-semibold text-moss" onClick={() => setMode("signup")}>
+                  Create an account
+                </button>
+              </p>
+            </>
+          )}
+          {mode !== "signin" && (
+            <p>
+              Already have an account?{" "}
+              <button className="font-semibold text-moss" onClick={() => setMode("signin")}>
+                Sign in
+              </button>
+            </p>
+          )}
+        </div>
+      </main>
     </div>
+  );
+}
+
+export default function AuthPage() {
+  return (
+    <Suspense>
+      <AuthScreen />
+    </Suspense>
   );
 }

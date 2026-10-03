@@ -1,72 +1,236 @@
 rules_version = '2';
+
+// All data access happens from the client, so these rules are the API's
+// authorization layer. Fields marked "system" are only written by Cloud
+// Functions (functions/) or the admin seed script, which bypass rules.
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Users collection
+    function signedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
+    function data() { return request.resource.data; }
+    function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+    function userDoc(id) { return get(/databases/$(database)/documents/users/$(id)).data; }
+
+    function isStr(v, min, max) { return v is string && v.size() >= min && v.size() <= max; }
+    function optStr(m, k, max) { return !(k in m) || (m[k] is string && m[k].size() <= max); }
+    function optStrList(m, k) { return !(k in m) || (m[k] is list && m[k].size() <= 20); }
+
+    // "YYYY-MM-DD" -> timestamp at UTC midnight
+    function isDay(s) { return s is string && s.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'); }
+    function day(s) {
+      return timestamp.date(int(s.split('-')[0]), int(s.split('-')[1]), int(s.split('-')[2]));
+    }
+
+    // ─── Users ─────────────────────────────────────────────────────────────
+    // Public profile. Contact details live in the private subcollection.
+    // System fields (verified, topRated, rating, reviewCount, completedStays)
+    // are not in editableFields, so clients can never set them.
     match /users/{userId} {
+      function editableFields() {
+        return ['uid', 'displayName', 'photoURL', 'role', 'onboarded', 'location', 'bio',
+                'services', 'petTypes', 'pricePerNight', 'experience', 'availability',
+                'responseTime', 'createdAt', 'updatedAt'];
+      }
+      function validProfile(m) {
+        return isStr(m.displayName, 1, 60)
+          && (m.role == null || m.role in ['parent', 'sitter'])
+          && m.onboarded is bool
+          && (!('photoURL' in m) || m.photoURL == null || isStr(m.photoURL, 0, 2048))
+          && optStr(m, 'location', 80)
+          && optStr(m, 'bio', 600)
+          && optStr(m, 'experience', 30)
+          && optStr(m, 'responseTime', 40)
+          && optStrList(m, 'services')
+          && optStrList(m, 'petTypes')
+          && optStrList(m, 'availability')
+          && (!('pricePerNight' in m) || (m.pricePerNight is int && m.pricePerNight >= 100 && m.pricePerNight <= 100000))
+          // A sitter can't go live without a rate and the pets they take.
+          && (!(m.role == 'sitter' && m.onboarded == true)
+              || (m.pricePerNight is int && m.petTypes is list && m.petTypes.size() > 0));
+      }
+
       allow read: if true;
-      allow create: if request.auth != null && request.auth.uid == userId;
-      allow update: if request.auth != null && request.auth.uid == userId;
+      allow create: if signedIn() && uid() == userId
+        && data().uid == userId
+        && data().keys().hasOnly(editableFields())
+        && validProfile(data());
+      allow update: if signedIn() && uid() == userId
+        && changed().hasOnly(editableFields())
+        && !changed().hasAny(['uid'])
+        // Role is fixed once onboarding is finished.
+        && (data().role == resource.data.role || resource.data.onboarded == false)
+        && validProfile(data());
+      allow delete: if false;
+
+      match /private/{docId} {
+        allow read, write: if signedIn() && uid() == userId;
+      }
+    }
+
+    // ─── Pets ──────────────────────────────────────────────────────────────
+    // Only the owner can see pets; sitters get a snapshot copied into bookings.
+    match /pets/{petId} {
+      function validPet(m) {
+        return m.keys().hasOnly(['ownerId', 'name', 'type', 'breed', 'age', 'notes', 'createdAt'])
+          && isStr(m.name, 1, 40) && isStr(m.type, 1, 20)
+          && optStr(m, 'breed', 60) && optStr(m, 'age', 20) && optStr(m, 'notes', 1000);
+      }
+      allow read: if signedIn() && resource.data.ownerId == uid();
+      allow create: if signedIn() && data().ownerId == uid() && validPet(data());
+      allow update: if signedIn() && resource.data.ownerId == uid()
+        && data().ownerId == uid() && validPet(data());
+      allow delete: if signedIn() && resource.data.ownerId == uid();
+    }
+
+    // ─── Bookings ──────────────────────────────────────────────────────────
+    match /bookings/{bookingId} {
+      function isParent() { return uid() == resource.data.parentId; }
+      function isSitter() { return uid() == resource.data.sitterId; }
+
+      function validNew(b) {
+        let sitter = userDoc(b.sitterId);
+        let pet = get(/databases/$(database)/documents/pets/$(b.petId)).data;
+        return b.keys().hasOnly(['sitterId', 'sitterName', 'sitterPhoto', 'parentId', 'parentName',
+              'parentPhoto', 'petId', 'petName', 'petType', 'petNotes', 'startDate', 'endDate',
+              'nights', 'pricePerNight', 'totalPrice', 'status', 'paymentStatus', 'notes',
+              'createdAt', 'updatedAt'])
+          && b.parentId == uid()
+          && b.sitterId != uid()
+          && b.status == 'pending'
+          && b.paymentStatus == 'pending'
+          && sitter.role == 'sitter' && sitter.onboarded == true
+          && pet.ownerId == uid()
+          && isDay(b.startDate) && isDay(b.endDate)
+          && day(b.startDate) >= request.time - duration.value(1, 'd')
+          && b.nights is int && b.nights >= 1 && b.nights <= 60
+          && (day(b.endDate) - day(b.startDate)).seconds() == b.nights * 86400
+          // Price is taken from the sitter's own profile, never trusted from the client.
+          && b.pricePerNight == sitter.pricePerNight
+          && b.totalPrice == b.nights * sitter.pricePerNight
+          && isStr(b.notes, 0, 1000);
+      }
+
+      function validTransition() {
+        let from = resource.data.status;
+        let to = request.resource.data.status;
+        let paid = resource.data.paymentStatus == 'paid';
+        return (isSitter() && from == 'pending' && to in ['confirmed', 'declined'])
+          || (isParent() && from == 'pending' && to == 'cancelled')
+          || ((isParent() || isSitter()) && from == 'confirmed' && !paid && to == 'cancelled')
+          || (isSitter() && from == 'confirmed' && paid && to == 'completed'
+              && request.time >= day(resource.data.endDate));
+      }
+
+      allow read: if signedIn() && (isParent() || isSitter());
+      allow create: if signedIn() && validNew(data());
+      // Clients may only move the status along the allowed path.
+      // Payment fields are written by the verifyPayment Cloud Function.
+      allow update: if signedIn() && (isParent() || isSitter())
+        && changed().hasOnly(['status', 'updatedAt'])
+        && validTransition();
       allow delete: if false;
     }
 
-    // Pets collection
-    match /pets/{petId} {
+    // ─── Reviews ───────────────────────────────────────────────────────────
+    // Document ID is the booking ID: one review per completed stay.
+    match /reviews/{bookingId} {
+      function stay() { return get(/databases/$(database)/documents/bookings/$(bookingId)).data; }
+
       allow read: if true;
-      allow create: if request.auth != null && request.auth.uid == resource.data.ownerId;
-      allow update: if request.auth != null && request.auth.uid == resource.data.ownerId;
-      allow delete: if request.auth != null && request.auth.uid == resource.data.ownerId;
+      allow create: if signedIn()
+        && data().keys().hasOnly(['sitterId', 'bookingId', 'authorId', 'author', 'authorPhoto',
+              'rating', 'text', 'petType', 'helpfulBy', 'createdAt'])
+        && data().authorId == uid()
+        && data().bookingId == bookingId
+        && stay().parentId == uid()
+        && stay().status == 'completed'
+        && data().sitterId == stay().sitterId
+        && data().rating is int && data().rating >= 1 && data().rating <= 5
+        && isStr(data().text, 10, 1000)
+        && data().helpfulBy.size() == 0;
+      allow update: if signedIn() && (
+        // The sitter may reply once.
+        (uid() == resource.data.sitterId
+          && !('response' in resource.data)
+          && changed().hasOnly(['response', 'responseAt'])
+          && isStr(data().response, 1, 600))
+        // Anyone else may add or remove only themselves from helpfulBy.
+        || (uid() != resource.data.authorId
+          && changed().hasOnly(['helpfulBy'])
+          && data().helpfulBy.toSet().difference(resource.data.helpfulBy.toSet())
+               .union(resource.data.helpfulBy.toSet().difference(data().helpfulBy.toSet()))
+               == [uid()].toSet())
+      );
+      allow delete: if false;
     }
 
-    // Bookings collection
-    match /bookings/{bookingId} {
-      allow read: if request.auth != null &&
-        (request.auth.uid == resource.data.parentId ||
-         request.auth.uid == resource.data.sitterId);
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.parentId;
-      allow update: if request.auth != null &&
-        (request.auth.uid == resource.data.parentId ||
-         request.auth.uid == resource.data.sitterId);
+    // ─── Conversations & messages ──────────────────────────────────────────
+    // ID is "{parentId}_{sitterId}", so there is one thread per pair.
+    match /conversations/{convId} {
+      function member() { return uid() in resource.data.participants; }
+
+      // A missing doc may be read (it reveals nothing) so clients can check existence.
+      allow read: if signedIn() && (resource == null || member());
+      allow create: if signedIn()
+        && convId == data().parentId + '_' + data().sitterId
+        && data().participants == [data().parentId, data().sitterId]
+        && uid() in data().participants
+        && userDoc(data().sitterId).role == 'sitter'
+        && userDoc(data().parentId).role == 'parent';
+      allow update: if signedIn() && member()
+        && changed().hasOnly(['lastMessage', 'lastSenderId', 'lastMessageAt'])
+        && data().lastSenderId == uid();
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        function convo() { return get(/databases/$(database)/documents/conversations/$(convId)).data; }
+        allow read: if signedIn() && uid() in convo().participants;
+        allow create: if signedIn()
+          && uid() in convo().participants
+          && data().keys().hasOnly(['senderId', 'text', 'createdAt'])
+          && data().senderId == uid()
+          && isStr(data().text, 1, 2000)
+          && data().createdAt == request.time;
+        allow update, delete: if false;
+      }
     }
 
-    // Reviews collection
-    match /reviews/{reviewId} {
-      allow read: if true;
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.authorId;
-      allow update: if request.auth != null &&
-        (request.auth.uid == resource.data.authorId ||
-         request.auth.uid == resource.data.sitterId);
-    }
-
-    // Invoices collection
-    match /invoices/{invoiceId} {
-      allow read: if request.auth != null && request.auth.uid == resource.data.sitterId;
-    }
-
-    // Conversations collection
-    match /conversations/{conversationId} {
-      allow read: if request.auth != null && request.auth.uid in resource.data.participants;
-      allow create: if request.auth != null;
-      allow update: if request.auth != null && request.auth.uid in resource.data.participants;
-    }
-
-    // Messages collection
-    match /messages/{messageId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.senderId;
-    }
-
-    // Posts collection
+    // ─── Community ─────────────────────────────────────────────────────────
     match /posts/{postId} {
       allow read: if true;
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.authorId;
-      allow update: if request.auth != null;
-    }
+      allow create: if signedIn()
+        && data().keys().hasOnly(['authorId', 'author', 'authorPhoto', 'authorRole', 'category',
+              'title', 'text', 'likedBy', 'commentCount', 'createdAt'])
+        && data().authorId == uid()
+        && data().category in ['tip', 'question', 'story']
+        && data().authorRole == userDoc(uid()).role
+        && isStr(data().title, 4, 120) && isStr(data().text, 10, 4000)
+        && data().likedBy.size() == 0 && data().commentCount == 0;
+      allow update: if signedIn() && (
+        // Like / unlike: add or remove only yourself.
+        (changed().hasOnly(['likedBy'])
+          && data().likedBy.toSet().difference(resource.data.likedBy.toSet())
+               .union(resource.data.likedBy.toSet().difference(data().likedBy.toSet()))
+               == [uid()].toSet())
+        // Comment counter moves by exactly one, alongside a new comment in the same batch.
+        || (changed().hasOnly(['commentCount'])
+          && data().commentCount == resource.data.commentCount + 1)
+        // Authors may edit their own text.
+        || (uid() == resource.data.authorId
+          && changed().hasOnly(['title', 'text'])
+          && isStr(data().title, 4, 120) && isStr(data().text, 10, 4000))
+      );
+      allow delete: if signedIn() && uid() == resource.data.authorId;
 
-    // Comments collection
-    match /comments/{commentId} {
-      allow read: if true;
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.authorId;
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if signedIn()
+          && data().keys().hasOnly(['authorId', 'author', 'authorPhoto', 'text', 'createdAt'])
+          && data().authorId == uid()
+          && isStr(data().text, 1, 1000);
+        allow delete: if signedIn() && uid() == resource.data.authorId;
+      }
     }
   }
 }

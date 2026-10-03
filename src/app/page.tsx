@@ -2,284 +2,196 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import {
-  Search,
-  Shield,
-  Heart,
-  Star,
-  ArrowRight,
-  PawPrint,
-  Clock,
-  MapPin,
-  Users,
-  Calendar,
-  Loader2,
-} from "lucide-react";
+import { ArrowRight, CalendarHeart, PawPrint, Search, ShieldCheck, Sparkles } from "lucide-react";
+import { useAuth } from "@/lib/auth-context";
+import { getPosts, getSitters, subscribeBookings } from "@/lib/db";
+import type { Booking, CommunityPost, SitterProfile } from "@/lib/types";
+import { PET_EMOJI, PET_TYPES } from "@/lib/constants";
+import { firstName, formatRange, greeting, todayISO } from "@/lib/format";
 import Avatar from "@/components/Avatar";
+import { SitterTile } from "@/components/SitterCard";
+import { SectionTitle, Skeleton } from "@/components/ui";
 
-const features = [
-  {
-    icon: Shield,
-    title: "Verified Sitters",
-    desc: "Every sitter passes a thorough background check and identity verification.",
-  },
-  {
-    icon: Heart,
-    title: "Personalized Care",
-    desc: "Detailed profiles help you find the perfect match for your pet's unique needs.",
-  },
-  {
-    icon: Clock,
-    title: "Flexible Booking",
-    desc: "Book overnight stays, day visits, or walks with instant confirmation.",
-  },
-  {
-    icon: Star,
-    title: "Honest Reviews",
-    desc: "Real feedback from real pet parents so you can book with confidence.",
-  },
-];
-
-const stats = [
-  { label: "Pet Parents", value: "10,000+", icon: Users },
-  { label: "Verified Sitters", value: "500+", icon: Shield },
-  { label: "Bookings Completed", value: "25,000+", icon: Calendar },
-];
-
-interface SitterData {
-  id: string;
-  uid: string;
-  displayName: string;
-  gender: "male" | "female";
-  bio: string;
-  rating: number;
-  reviewCount: number;
-  pricePerNight: number;
-  location: string;
-  topRated: boolean;
-}
-
-export default function Home() {
-  const [topSitters, setTopSitters] = useState<SitterData[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function Discover() {
+  const { profile, loading } = useAuth();
+  const [sitters, setSitters] = useState<SitterProfile[] | null>(null);
+  const [posts, setPosts] = useState<CommunityPost[]>([]);
+  const [nextStay, setNextStay] = useState<Booking | null>(null);
 
   useEffect(() => {
-    fetch("/api/sitters?sortBy=rating")
-      .then((r) => r.json())
-      .then((data) => {
-        if (Array.isArray(data)) {
-          setTopSitters(data.filter((s: SitterData) => s.topRated).slice(0, 3));
-        }
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+    getSitters({ sortBy: "rating" }).then(setSitters).catch(() => setSitters([]));
+    getPosts().then((p) => setPosts(p.slice(0, 2))).catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (!profile?.role) return;
+    const field = profile.role === "sitter" ? "sitterId" : "parentId";
+    return subscribeBookings(profile.uid, field, (all) => {
+      const today = todayISO();
+      const upcoming = all
+        .filter((b) => (b.status === "confirmed" || b.status === "pending") && b.endDate >= today)
+        .sort((a, b) => a.startDate.localeCompare(b.startDate));
+      setNextStay(upcoming[0] ?? null);
+    });
+  }, [profile?.uid, profile?.role]);
+
   return (
-    <div>
-      {/* Hero */}
-      <section className="relative overflow-hidden bg-gradient-to-br from-background via-primary-50/30 to-surface">
-        <div className="relative mx-auto max-w-6xl px-6 pb-20 pt-20 md:pb-28 md:pt-32">
-          <div className="max-w-3xl">
-            <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-primary-50 px-4 py-1.5 text-sm font-medium text-primary-600">
-              <PawPrint className="h-4 w-4" />
-              Trusted by 10,000+ pet parents
-            </div>
-            <h1 className="text-4xl font-bold leading-tight tracking-tight text-foreground md:text-6xl md:leading-[1.1]">
-              Your pet deserves the{" "}
-              <span className="text-primary-500">best care</span> when
-              you are away
-            </h1>
-            <p className="mt-6 max-w-xl text-lg leading-relaxed text-text-secondary">
-              Connect with loving, verified pet sitters in your neighborhood.
-              From overnight stays to daily walks, find the perfect match for
-              your furry family member.
+    <main className="pt-safe">
+      <header className="flex items-center justify-between px-5 pt-5">
+        <div>
+          <p className="text-sm font-medium text-bark-soft">{profile ? greeting() : "Welcome to"}</p>
+          <h1 className="font-display text-[28px] leading-tight text-bark">
+            {profile ? firstName(profile.displayName) : "CarePaws"}
+          </h1>
+        </div>
+        {profile ? (
+          <Link href="/dashboard/" aria-label="Your profile">
+            <Avatar src={profile.photoURL} name={profile.displayName} size="md" />
+          </Link>
+        ) : (
+          !loading && (
+            <Link href="/auth/" className="rounded-full bg-moss px-5 py-2.5 text-sm font-semibold text-on-moss">
+              Sign in
+            </Link>
+          )
+        )}
+      </header>
+
+      <div className="px-5 pt-5">
+        <Link
+          href="/sitters/"
+          className="flex h-14 items-center gap-3 rounded-full border border-oat-deep bg-paper px-5 text-stone shadow-soft"
+        >
+          <Search className="h-5 w-5" />
+          <span>Search sitters by name or area</span>
+        </Link>
+      </div>
+
+      {/* Hero for new visitors, next stay for members */}
+      <section className="px-5 pt-6">
+        {nextStay ? (
+          <Link
+            href="/bookings/"
+            className="block overflow-hidden rounded-[28px] bg-moss p-5 text-on-moss shadow-lift"
+          >
+            <p className="flex items-center gap-2 text-sm font-semibold opacity-80">
+              <CalendarHeart className="h-4 w-4" />
+              {nextStay.status === "pending" ? "Awaiting reply" : "Next stay"}
             </p>
-
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Link
-                href="/sitters"
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary-500 px-7 py-3.5 text-sm font-medium text-white transition-all hover:bg-primary-600 active:scale-[0.98]"
-              >
-                <Search className="h-4 w-4" />
-                Find a Sitter
-              </Link>
-              <Link
-                href="/community"
-                className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-surface px-7 py-3.5 text-sm font-medium text-foreground transition-all hover:bg-surface-alt active:scale-[0.98]"
-              >
-                Join Our Community
-              </Link>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Stats */}
-      <section className="border-y border-border bg-surface">
-        <div className="mx-auto max-w-6xl px-6 py-12">
-          <div className="grid gap-8 md:grid-cols-3">
-            {stats.map((stat) => (
-              <div key={stat.label} className="flex items-center gap-4">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary-50 text-primary-500">
-                  <stat.icon className="h-5 w-5" />
-                </div>
-                <div>
-                  <div className="text-2xl font-bold text-foreground">
-                    {stat.value}
-                  </div>
-                  <div className="text-sm text-text-tertiary">{stat.label}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Features */}
-      <section className="bg-background">
-        <div className="mx-auto max-w-6xl px-6 py-20">
-          <div className="text-center">
-            <h2 className="text-3xl font-bold tracking-tight text-foreground">
-              Why pet parents trust CarePaws
-            </h2>
-            <p className="mt-3 text-text-tertiary">
-              Everything you need for peace of mind while you are away
+            <p className="mt-3 font-display text-2xl">
+              {nextStay.petName} with {profile?.role === "sitter" ? nextStay.parentName : nextStay.sitterName}
             </p>
-          </div>
-          <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-            {features.map((f) => (
-              <div
-                key={f.title}
-                className="group rounded-xl border border-border bg-surface p-6 transition-all duration-200 hover:border-primary-100 hover:shadow-sm"
-              >
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary-50 text-primary-500 transition-colors group-hover:bg-primary-100">
-                  <f.icon className="h-5 w-5" />
-                </div>
-                <h3 className="mt-4 font-semibold text-foreground">
-                  {f.title}
-                </h3>
-                <p className="mt-2 text-sm leading-relaxed text-text-tertiary">
-                  {f.desc}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Top Sitters Preview */}
-      <section className="border-y border-border bg-surface">
-        <div className="mx-auto max-w-6xl px-6 py-20">
-          <div className="flex items-end justify-between">
-            <div>
-              <h2 className="text-3xl font-bold tracking-tight text-foreground">
-                Top-rated sitters
-              </h2>
-              <p className="mt-2 text-text-tertiary">
-                Meet our highest-rated pet care professionals
-              </p>
-            </div>
+            <p className="mt-1 opacity-80">{formatRange(nextStay.startDate, nextStay.endDate)}</p>
+            <span className="mt-4 inline-flex items-center gap-1 text-sm font-semibold">
+              View stay <ArrowRight className="h-4 w-4" />
+            </span>
+          </Link>
+        ) : (
+          <div className="relative overflow-hidden rounded-[28px] bg-moss p-6 text-on-moss shadow-lift">
+            <svg className="absolute -right-8 -bottom-10 h-44 w-44 opacity-15" viewBox="0 0 100 100" aria-hidden>
+              <path fill="currentColor" d="M50 8C27 8 10 30 10 55s18 37 40 37 40-12 40-37S73 8 50 8z" />
+            </svg>
+            <p className="flex items-center gap-2 text-sm font-semibold opacity-85">
+              <ShieldCheck className="h-4 w-4" /> Verified, reviewed, local
+            </p>
+            <h2 className="mt-3 max-w-[15rem] font-display text-[26px] leading-tight">Care that feels like home, while you’re away.</h2>
             <Link
-              href="/sitters"
-              className="hidden items-center gap-1 text-sm font-medium text-primary-500 hover:text-primary-600 md:flex"
+              href={profile ? "/sitters/" : "/auth/?mode=signup"}
+              className="mt-5 inline-flex h-11 items-center gap-2 rounded-full bg-linen px-5 text-sm font-semibold text-moss"
             >
-              View all <ArrowRight className="h-4 w-4" />
+              {profile ? "Find a sitter" : "Get started"} <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
+        )}
+      </section>
 
-          <div className="mt-10 grid gap-5 md:grid-cols-3">
-            {loading ? (
-              <div className="col-span-full flex justify-center py-10">
-                <Loader2 className="h-8 w-8 animate-spin text-primary-400" />
-              </div>
-            ) : (
-              topSitters.map((sitter) => (
-                <Link
-                  key={sitter.id}
-                  href={`/sitters/${sitter.id}`}
-                  className="group rounded-xl border border-border bg-surface p-5 transition-all duration-200 hover:shadow-md hover:border-primary-100"
-                >
-                  <div className="flex items-center gap-3">
-                    <Avatar
-                      name={sitter.displayName}
-                      gender={sitter.gender}
-                      size="lg"
-                    />
-                    <div>
-                      <h3 className="font-semibold text-foreground">
-                        {sitter.displayName}
-                      </h3>
-                      <div className="flex items-center gap-1 text-xs text-text-tertiary">
-                        <MapPin className="h-3 w-3" /> {sitter.location}
-                      </div>
-                    </div>
-                  </div>
-                  <p className="mt-3 line-clamp-2 text-sm text-text-secondary">
-                    {sitter.bio}
-                  </p>
-                  <div className="mt-4 flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <Star className="h-4 w-4 fill-warm-400 text-warm-400" />
-                      <span className="text-sm font-medium">
-                        {sitter.rating}
-                      </span>
-                      <span className="text-xs text-text-tertiary">
-                        ({sitter.reviewCount})
-                      </span>
-                    </div>
-                    <span className="text-sm font-semibold">
-                      ₹{sitter.pricePerNight}
-                      <span className="font-normal text-text-tertiary">
-                        /night
-                      </span>
-                    </span>
-                  </div>
-                </Link>
-              ))
+      <section className="pt-7">
+        <div className="px-5">
+          <SectionTitle>Who needs care?</SectionTitle>
+        </div>
+        <div className="no-scrollbar flex gap-3 overflow-x-auto px-5 pb-1">
+          {PET_TYPES.map((t) => (
+            <Link
+              key={t}
+              href={`/sitters/?pet=${encodeURIComponent(t)}`}
+              className="flex w-20 shrink-0 flex-col items-center gap-2 rounded-2xl bg-paper py-3 shadow-soft active:bg-oat"
+            >
+              <span className="text-2xl" aria-hidden>
+                {PET_EMOJI[t]}
+              </span>
+              <span className="text-xs font-semibold text-bark-soft">{t}</span>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <section className="pt-7">
+        <div className="px-5">
+          <SectionTitle
+            action={
+              <Link href="/sitters/" className="text-sm font-semibold text-moss">
+                See all
+              </Link>
+            }
+          >
+            Loved by pet parents
+          </SectionTitle>
+        </div>
+        <div className="no-scrollbar flex gap-3 overflow-x-auto px-5 pb-2">
+          {sitters === null
+            ? Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-48 w-40 shrink-0" />)
+            : sitters.slice(0, 8).map((s) => <SitterTile key={s.uid} sitter={s} />)}
+          {sitters?.length === 0 && (
+            <p className="py-6 text-sm text-bark-soft">No sitters yet. Check back soon.</p>
+          )}
+        </div>
+      </section>
+
+      {posts.length > 0 && (
+        <section className="px-5 pt-7">
+          <SectionTitle
+            action={
+              <Link href="/community/" className="text-sm font-semibold text-moss">
+                Open Circle
+              </Link>
+            }
+          >
+            From the Circle
+          </SectionTitle>
+          <div className="space-y-3">
+            {posts.map((p) => (
+              <Link
+                key={p.id}
+                href={`/community/post/?id=${p.id}`}
+                className="block rounded-[var(--radius-card)] border border-oat-deep/60 bg-paper p-4 shadow-soft"
+              >
+                <p className="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-clay uppercase">
+                  <Sparkles className="h-3.5 w-3.5" /> {p.category}
+                </p>
+                <p className="mt-1.5 font-semibold text-bark">{p.title}</p>
+                <p className="mt-1 line-clamp-2 text-sm text-bark-soft">{p.text}</p>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {profile?.role !== "sitter" && (
+        <section className="px-5 pt-7 pb-4">
+          <div className="flex items-center gap-4 rounded-[var(--radius-card)] bg-clay-tint p-5">
+            <PawPrint className="h-8 w-8 shrink-0 text-clay" />
+            <div className="flex-1">
+              <p className="font-semibold text-bark">Love animals?</p>
+              <p className="text-sm text-bark-soft">Sit for neighbours and earn on your terms.</p>
+            </div>
+            {!profile && (
+              <Link href="/auth/?mode=signup" className="text-sm font-semibold text-clay">
+                Join
+              </Link>
             )}
           </div>
-
-          <div className="mt-8 text-center md:hidden">
-            <Link
-              href="/sitters"
-              className="inline-flex items-center gap-1 text-sm font-medium text-primary-500"
-            >
-              View all sitters <ArrowRight className="h-4 w-4" />
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* CTA */}
-      <section className="bg-background">
-        <div className="mx-auto max-w-6xl px-6 py-20">
-          <div className="rounded-2xl bg-foreground p-12 text-center md:p-16">
-            <h2 className="text-3xl font-bold text-background md:text-4xl">
-              Ready to find your perfect sitter?
-            </h2>
-            <p className="mx-auto mt-4 max-w-lg text-text-tertiary">
-              Join thousands of happy pet parents who trust CarePaws for their
-              pet care needs.
-            </p>
-            <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-              <Link
-                href="/sitters"
-                className="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-7 py-3.5 text-sm font-medium text-white transition-all hover:bg-primary-600 active:scale-[0.98]"
-              >
-                <Search className="h-4 w-4" />
-                Find a Sitter
-              </Link>
-              <Link
-                href="/auth"
-                className="inline-flex items-center gap-2 rounded-lg border border-text-secondary px-7 py-3.5 text-sm font-medium text-surface transition-all hover:border-text-tertiary active:scale-[0.98]"
-              >
-                Become a Sitter
-              </Link>
-            </div>
-          </div>
-        </div>
-      </section>
-    </div>
+        </section>
+      )}
+    </main>
   );
 }
