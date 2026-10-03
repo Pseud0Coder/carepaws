@@ -6,6 +6,10 @@
 //     node admin.mjs verify   <uid>                after you've checked them (call the number!)
 //     node admin.mjs unverify <uid>                also withdraws every vouch they gave
 //
+//   Reports from users
+//     node admin.mjs reports                       open reports, newest first, with the reported content
+//     node admin.mjs report-resolve <reportId>     mark one handled (suspend an account in the Firebase console)
+//
 //   Sitter identity verification (KYC)
 //     node admin.mjs kyc-pending                   cases waiting for review
 //     node admin.mjs kyc-show <uid> [--out dir]    details, and downloads the ID images for review
@@ -33,8 +37,8 @@ for (let i = 0; i < argv.length; i++) {
   } else positional.push(argv[i]);
 }
 const [cmd, uid] = positional;
-const COMMANDS = ["pending", "verify", "unverify", "kyc-pending", "kyc-show", "kyc-approve", "kyc-reject", "kyc-purge"];
-const needsUid = cmd !== "pending" && cmd !== "kyc-pending";
+const COMMANDS = ["pending", "verify", "unverify", "reports", "report-resolve", "kyc-pending", "kyc-show", "kyc-approve", "kyc-reject", "kyc-purge"];
+const needsUid = !["pending", "kyc-pending", "reports"].includes(cmd);
 const projectId = flags.project || process.env.GCLOUD_PROJECT;
 if (!projectId || !COMMANDS.includes(cmd) || (needsUid && !uid)) {
   console.error(`Usage: node admin.mjs <${COMMANDS.join("|")}> [uid] --project <firebase-project-id>`);
@@ -72,6 +76,24 @@ if (cmd === "pending") {
     const o = d.data();
     console.log(`${d.id}\n  ${o.displayName} (${o.role}) · ${o.location}\n  ${o.address}\n  phone: ${o.phone}  site: ${o.website || "-"}\n`);
   }
+} else if (cmd === "reports") {
+  const snap = await db.collection("reports").orderBy("createdAt", "desc").limit(100).get();
+  const open = snap.docs.filter((d) => !d.get("resolvedAt"));
+  if (!open.length) console.log("No open reports.");
+  for (const d of open) {
+    const r = d.data();
+    console.log(`${d.id}  ${r.createdAt?.toDate().toISOString()}  ${r.reason.toUpperCase()}  ${r.targetType}:${r.targetId}  (reported by ${r.reporterId})`);
+    if (r.details) console.log(`    "${r.details}"`);
+    // Show what was reported, where we can.
+    const target = r.targetType === "post" ? await db.doc(`posts/${r.targetId}`).get() : r.targetType === "comment" ? await db.doc(`posts/${r.targetId.split("/")[0]}/comments/${r.targetId.split("/")[1]}`).get() : r.targetType === "user" ? await db.doc(`users/${r.targetId}`).get() : null;
+    if (target?.exists) {
+      const t = target.data();
+      console.log(`    → ${t.title ? t.title + ": " : ""}${(t.text || t.bio || t.displayName || "").slice(0, 160)}  [author/owner: ${t.authorId || r.targetId}]`);
+    }
+  }
+} else if (cmd === "report-resolve") {
+  await db.doc(`reports/${uid}`).update({ resolvedAt: FieldValue.serverTimestamp(), resolvedBy: reviewer });
+  console.log(`Resolved ${uid}.`);
 } else if (cmd === "verify" || cmd === "unverify") {
   const ref = db.doc(`users/${uid}`);
   const snap = await ref.get();

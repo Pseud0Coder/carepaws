@@ -18,10 +18,11 @@ import {
   Sun,
   SunMoon,
   Trash2,
+  UserX,
   Wallet,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { addPet, deletePet, getContact, getPets, getSitter, getVouchesByOrg, subscribeBookings, updateContact, updatePet, uploadAvatar, withdrawVouch } from "@/lib/db";
+import { addPet, deleteMyAccount, deletePet, getContact, getPets, getSitter, getVouchesByOrg, subscribeBookings, updateContact, updatePet, uploadAvatar, withdrawVouch } from "@/lib/db";
 import { isOrgRole, type Booking, type Pet, type SitterProfile, type UserProfile, type Vouch } from "@/lib/types";
 import { PET_EMOJI, PLATFORM_FEE_RATE, ROLE_LABEL } from "@/lib/constants";
 import { formatINR } from "@/lib/format";
@@ -344,6 +345,74 @@ function EditDetails({ profile, onDone }: { profile: UserProfile; onDone: () => 
   );
 }
 
+/** Account deletion: in-app, as required by Google Play and the right to erasure. */
+function DeleteAccountSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { signOut } = useAuth();
+  const router = useRouter();
+  const toast = useToast();
+  const [confirmText, setConfirmText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [needsLogin, setNeedsLogin] = useState(false);
+
+  async function remove() {
+    setBusy(true);
+    setError("");
+    try {
+      await deleteMyAccount();
+      await signOut().catch(() => {});
+      onClose();
+      toast("Your account has been deleted.");
+      router.replace("/");
+    } catch (e) {
+      const msg = (e as { message?: string }).message ?? "";
+      if (/recent-login-required/.test(msg)) setNeedsLogin(true);
+      else if (/active-stays/.test(msg)) setError("You have a stay in progress or coming up. Finish or cancel it first, then try again.");
+      else setError("Couldn’t delete your account. Check your connection and try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Sheet open={open} onClose={onClose} title="Delete my account">
+      {needsLogin ? (
+        <div className="space-y-4">
+          <p className="text-sm text-bark-soft">For your security, sign in again first. Then come back here to delete your account.</p>
+          <Button
+            block
+            onClick={async () => {
+              await signOut();
+              router.replace("/auth/?next=/dashboard/");
+            }}
+          >
+            Sign out and sign in again
+          </Button>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="space-y-2 text-sm text-bark-soft">
+            <p>
+              <span className="font-semibold text-bark">Deleted:</span> your profile, phone and email, pets, identity documents, photos, vouches, and your block list.
+            </p>
+            <p>
+              <span className="font-semibold text-bark">Kept, without your name or photo:</span> past bookings and payments (for accounting and disputes), reviews and posts you wrote, and messages you sent, which remain visible to the people you sent them to.
+            </p>
+            <p className="rounded-2xl bg-ember-tint px-4 py-3 text-bark">This can’t be undone.</p>
+          </div>
+          <Field label="Type DELETE to confirm">
+            <Input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} autoCapitalize="characters" autoComplete="off" />
+          </Field>
+          <ErrorNote>{error}</ErrorNote>
+          <Button block variant="danger" onClick={remove} loading={busy} disabled={confirmText.trim() !== "DELETE"}>
+            Delete my account
+          </Button>
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
 function ThemeSwitch() {
   // Only rendered client-side (behind RequireAuth), so reading storage here is safe.
   const [pref, setPref] = useState<ThemePref>(getThemePref);
@@ -381,7 +450,7 @@ function You({ profile }: { profile: UserProfile }) {
   const router = useRouter();
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [sheet, setSheet] = useState<"details" | "sitter" | "listing" | null>(null);
+  const [sheet, setSheet] = useState<"details" | "sitter" | "listing" | "delete" | null>(null);
   const [uploading, setUploading] = useState(false);
   const isSitter = profile.role === "sitter";
   const org = isOrgRole(profile.role) ? profile.role : null;
@@ -470,7 +539,19 @@ function You({ profile }: { profile: UserProfile }) {
         </div>
       </section>
 
+      <section className="px-5 pt-3">
+        <div className="overflow-hidden rounded-[var(--radius-card)] bg-paper shadow-soft">
+          <Row icon={<UserX className="h-5 w-5" />} label="Delete my account" danger onClick={() => setSheet("delete")} />
+        </div>
+        <p className="mt-2 px-1 text-center text-xs text-stone">
+          <Link href="/legal/" className="font-semibold">
+            Terms, care policy and privacy
+          </Link>
+        </p>
+      </section>
+
       <Footer />
+      <DeleteAccountSheet open={sheet === "delete"} onClose={() => setSheet(null)} />
 
       <Sheet open={sheet === "details"} onClose={() => setSheet(null)} title="Personal details">
         <EditDetails profile={profile} onDone={() => setSheet(null)} />

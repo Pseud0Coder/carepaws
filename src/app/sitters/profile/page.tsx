@@ -12,6 +12,7 @@ import { formatINR, timeAgo } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import Avatar from "@/components/Avatar";
 import StarRating from "@/components/StarRating";
+import SafetyMenu from "@/components/SafetyMenu";
 import UpgradeSheet from "@/components/UpgradeSheet";
 import VouchSection from "@/components/VouchSection";
 import { AppBar, Button, EmptyState, FullScreenLoader, Tag, TextArea, useToast } from "@/components/ui";
@@ -142,7 +143,10 @@ function SitterProfileScreen() {
 
   return (
     <>
-      <AppBar back />
+      <AppBar
+        back
+        action={!isSelf && <SafetyMenu targetType="user" targetId={sitter.uid} ownerId={sitter.uid} ownerName={sitter.displayName.split(" ")[0]} label="Report or block this sitter" />}
+      />
       <main className="pb-32">
         <section className="flex flex-col items-center px-5 pt-2 text-center">
           <Avatar src={sitter.photoURL} name={sitter.displayName} size="xl" className="shadow-lift" />

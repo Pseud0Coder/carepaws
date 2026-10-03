@@ -14,7 +14,7 @@ import { AppBar, Button, Chip, EmptyState, ErrorNote, Field, IconButton, Input, 
 const FILTERS: (PostCategory | "all")[] = ["all", "tip", "question", "story"];
 
 export default function CommunityPage() {
-  const { profile } = useAuth();
+  const { profile, blocked } = useAuth();
   const router = useRouter();
   const toast = useToast();
   const [filter, setFilter] = useState<PostCategory | "all">("all");
@@ -86,7 +86,7 @@ export default function CommunityPage() {
               action={profile && <Button onClick={startPost}>Write a post</Button>}
             />
           ) : (
-            posts.map((p) => <PostCard key={p.id} post={p} uid={profile?.uid} onLike={like} />)
+            posts.filter((p) => !blocked.has(p.authorId)).map((p) => <PostCard key={p.id} post={p} uid={profile?.uid} onLike={like} />)
           )}
         </div>
       </main>

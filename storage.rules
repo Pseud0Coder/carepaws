@@ -24,5 +24,21 @@ service firebase.storage {
         && (!firestore.exists(/databases/(default)/documents/kyc/$(userId))
             || firestore.get(/databases/(default)/documents/kyc/$(userId)).data.status == 'rejected');
     }
+
+    // Stay log photos: only the pet parent and the sitter of that booking can see or add them.
+    // Photos are add-only: `create` is allowed but `update` and `delete` never are, so an existing photo can't
+    // be replaced (the emulator doesn't distinguish create from overwrite, but Cloud Storage does).
+    match /stays/{bookingId}/{file} {
+      function stay() { return firestore.get(/databases/(default)/documents/bookings/$(bookingId)).data; }
+      allow read: if request.auth != null
+        && (request.auth.uid == stay().parentId || request.auth.uid == stay().sitterId);
+      allow create: if request.auth != null
+        && (request.auth.uid == stay().parentId || request.auth.uid == stay().sitterId)
+        && stay().paymentStatus == 'paid'
+        && file.matches('^[A-Za-z0-9_-]{8,40}\\.jpg$')
+        && request.resource.size < 6 * 1024 * 1024
+        && request.resource.contentType == 'image/jpeg';
+      allow update, delete: if false;
+    }
   }
 }

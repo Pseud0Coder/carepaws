@@ -10,6 +10,7 @@
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { initializeApp } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 import { FieldValue, Timestamp, getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { setGlobalOptions } from "firebase-functions/v2";
@@ -224,4 +225,83 @@ export const purgeKycImages = onSchedule({ schedule: "every day 03:30", timeZone
       purgedAt: FieldValue.serverTimestamp(),
     });
   }
+});
+
+/**
+ * Account deletion (an in-app path is required by Google Play and by India's DPDP Act right to erasure).
+ *
+ * Deleted: profile and private contact details, pets, identity documents and photos, blocks, vouches
+ * given or received, reviews received. Anonymised, because other people's records depend on them:
+ * bookings (kept for payment and dispute records), reviews, posts and comments written, and chat
+ * history (messages stay visible to the person they were sent to). Reports a user filed are kept.
+ *
+ * Refused while the user has a stay in progress or coming up, and if the sign-in is not recent.
+ */
+export const deleteAccount = onCall({ timeoutSeconds: 300, memory: "512MiB" }, async (req) => {
+  if (!req.auth) throw new HttpsError("unauthenticated", "Sign in first.");
+  const uid = req.auth.uid;
+
+  // A stolen session shouldn't be able to erase an account: require a sign-in in the last 15 minutes.
+  const signedInAt = Number(req.auth.token.auth_time) * 1000;
+  if (!signedInAt || Date.now() - signedInAt > 15 * 60 * 1000) {
+    throw new HttpsError("failed-precondition", "recent-login-required");
+  }
+
+  const [asParent, asSitter] = await Promise.all([
+    db.collection("bookings").where("parentId", "==", uid).get(),
+    db.collection("bookings").where("sitterId", "==", uid).get(),
+  ]);
+  const bookings = [...asParent.docs, ...asSitter.docs];
+  if (bookings.some((d) => d.get("status") === "confirmed")) {
+    throw new HttpsError("failed-precondition", "active-stays");
+  }
+
+  const ANON = "Deleted user";
+  const writer = db.bulkWriter();
+
+  // Bookings: close open requests, and strip the personal details from all of them.
+  for (const d of bookings) {
+    const isParent = d.get("parentId") === uid;
+    const patch: Record<string, unknown> = isParent
+      ? {
+          parentName: ANON, parentPhoto: null, notes: "", petNotes: "",
+          "declarations.emergencyContactName": "", "declarations.emergencyContactPhone": "",
+          "declarations.preferredVetName": FieldValue.delete(), "declarations.preferredVetPhone": FieldValue.delete(),
+        }
+      : { sitterName: ANON, sitterPhoto: null };
+    if (d.get("status") === "pending") patch.status = isParent ? "cancelled" : "declined";
+    void writer.update(d.ref, patch);
+  }
+
+  // Pets, vouches, reviews, identity.
+  const [pets, vouchesGiven, vouchesReceived, reviewsReceived, reviewsWritten, posts, liked, helpful, comments, convos] = await Promise.all([
+    db.collection("pets").where("ownerId", "==", uid).get(),
+    db.collection("vouches").where("orgId", "==", uid).get(),
+    db.collection("vouches").where("sitterId", "==", uid).get(),
+    db.collection("reviews").where("sitterId", "==", uid).get(),
+    db.collection("reviews").where("authorId", "==", uid).get(),
+    db.collection("posts").where("authorId", "==", uid).get(),
+    db.collection("posts").where("likedBy", "array-contains", uid).get(),
+    db.collection("reviews").where("helpfulBy", "array-contains", uid).get(),
+    db.collectionGroup("comments").where("authorId", "==", uid).get(),
+    db.collection("conversations").where("participants", "array-contains", uid).get(),
+  ]);
+  for (const d of [...pets.docs, ...vouchesGiven.docs, ...vouchesReceived.docs, ...reviewsReceived.docs]) void writer.delete(d.ref);
+  for (const d of reviewsWritten.docs) void writer.update(d.ref, { author: ANON, authorPhoto: null, authorId: "deleted-user" });
+  for (const d of posts.docs) void writer.update(d.ref, { author: ANON, authorPhoto: null, authorId: "deleted-user" });
+  for (const d of comments.docs) void writer.update(d.ref, { author: ANON, authorPhoto: null, authorId: "deleted-user" });
+  for (const d of liked.docs) void writer.update(d.ref, { likedBy: FieldValue.arrayRemove(uid) });
+  for (const d of helpful.docs) void writer.update(d.ref, { helpfulBy: FieldValue.arrayRemove(uid) });
+  for (const d of convos.docs) void writer.update(d.ref, { [`names.${uid}`]: ANON, [`photos.${uid}`]: null });
+  void writer.delete(db.doc(`kyc/${uid}`));
+  await writer.close();
+
+  // Profile (with private contact and block list), and files.
+  await db.recursiveDelete(db.doc(`users/${uid}`));
+  const bucket = getStorage().bucket();
+  await Promise.all([bucket.deleteFiles({ prefix: `kyc/${uid}/` }), bucket.deleteFiles({ prefix: `users/${uid}/` })]);
+
+  // Last, so a failure above can simply be retried by the user.
+  await getAuth().deleteUser(uid);
+  return { deleted: true };
 });

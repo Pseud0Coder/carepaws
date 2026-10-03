@@ -15,7 +15,7 @@ import {
 } from "firebase/auth";
 import { Capacitor } from "@capacitor/core";
 import { auth, isFirebaseConfigured } from "./firebase";
-import { ensureProfile, getProfile, updateProfile, type EditableProfile } from "./db";
+import { blockUser as dbBlock, ensureProfile, getProfile, subscribeBlocked, unblockUser as dbUnblock, updateProfile, type EditableProfile } from "./db";
 import type { UserProfile } from "./types";
 
 interface AuthContextType {
@@ -33,6 +33,10 @@ interface AuthContextType {
   phoneNumber: string | null;
   /** Reloads the Firebase user and its token (call after linking a phone number). */
   refreshUser: () => Promise<void>;
+  /** Ids of people this user has blocked. */
+  blocked: Set<string>;
+  blockUser: (id: string) => Promise<void>;
+  unblockUser: (id: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -55,6 +59,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(isFirebaseConfigured);
   const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
+  const [blocked, setBlocked] = useState<Set<string>>(new Set());
+
+  // Keep the block list live so feeds and chats hide blocked people straight away.
+  useEffect(() => {
+    if (!user) return;
+    const stop = subscribeBlocked(user.uid, setBlocked);
+    return () => {
+      stop();
+      setBlocked(new Set());
+    };
+  }, [user]);
 
   useEffect(() => {
     if (!isFirebaseConfigured) return;
@@ -79,6 +94,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const u = auth().currentUser;
     if (u) setProfile(await getProfile(u.uid));
   }, []);
+
+  const blockUser = useCallback(
+    async (id: string) => {
+      if (user) await dbBlock(user.uid, id);
+    },
+    [user]
+  );
+  const unblockUser = useCallback(
+    async (id: string) => {
+      if (user) await dbUnblock(user.uid, id);
+    },
+    [user]
+  );
 
   const refreshUser = useCallback(async () => {
     const u = auth().currentUser;
@@ -156,6 +184,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         refreshProfile,
         phoneNumber,
         refreshUser,
+        blocked,
+        blockUser,
+        unblockUser,
       }}
     >
       {children}

@@ -101,6 +101,15 @@ service cloud.firestore {
       match /private/{docId} {
         allow read, write: if signedIn() && uid() == userId;
       }
+
+      // People this user has blocked. Other rules consult it, so a blocked person can't message or book them.
+      match /blocked/{otherId} {
+        allow read: if signedIn() && uid() == userId;
+        allow create: if signedIn() && uid() == userId && otherId != userId
+          && data().keys().hasOnly(['createdAt']) && data().createdAt == request.time;
+        allow delete: if signedIn() && uid() == userId;
+        allow update: if false;
+      }
     }
 
     // ─── Identity verification (KYC) ────────────────────────────────────────
@@ -226,6 +235,7 @@ service cloud.firestore {
               'careLocation', 'petCare', 'declarations', 'createdAt', 'updatedAt'])
           && b.parentId == uid()
           && userDoc(uid()).role == 'parent'
+          && !exists(/databases/$(database)/documents/users/$(b.sitterId)/blocked/$(uid()))
           && b.sitterId != uid()
           && b.status == 'pending'
           && b.paymentStatus == 'pending'
@@ -267,6 +277,52 @@ service cloud.firestore {
           && data().sitterAckAt == request.time)
         || (changed().hasOnly(['status', 'updatedAt']) && validTransition()));
       allow delete: if false;
+
+      // The stay log: updates, condition at drop-off and pick-up, and incidents. Both sides can read it and add
+      // to it while a paid stay is on; entries can never be edited or deleted, so it stands as a shared record.
+      match /log/{entryId} {
+        function stay() { return get(/databases/$(database)/documents/bookings/$(bookingId)).data; }
+        function party() { return uid() == stay().parentId || uid() == stay().sitterId; }
+        function kindOk(k) {
+          return k in ['dropoff', 'pickup', 'incident']
+            || (k == 'update' && uid() == stay().sitterId);
+        }
+        function ownPhoto(p) {
+          return p is string && p.split('/').size() == 3 && p.split('/')[0] == 'stays' && p.split('/')[1] == bookingId;
+        }
+
+        allow read: if signedIn() && party();
+        allow create: if signedIn() && party()
+          && stay().paymentStatus == 'paid' && stay().status in ['confirmed', 'completed']
+          && data().keys().hasOnly(['authorId', 'authorRole', 'kind', 'text', 'photos', 'createdAt'])
+          && data().authorId == uid()
+          && data().authorRole == (uid() == stay().sitterId ? 'sitter' : 'parent')
+          && kindOk(data().kind)
+          && data().text is string && data().text.size() <= 1000
+          && data().photos is list && data().photos.size() <= 4
+          && (data().text.size() > 0 || data().photos.size() > 0)
+          && (data().photos.size() < 1 || ownPhoto(data().photos[0]))
+          && (data().photos.size() < 2 || ownPhoto(data().photos[1]))
+          && (data().photos.size() < 3 || ownPhoto(data().photos[2]))
+          && (data().photos.size() < 4 || ownPhoto(data().photos[3]))
+          && data().createdAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+
+    // ─── Reports ────────────────────────────────────────────────────────────
+    // Write-only for users; reviewed by admins. Reporting is how people flag posts, comments, profiles
+    // and messages that break the rules or put animals at risk.
+    match /reports/{reportId} {
+      allow read, update, delete: if false;
+      allow create: if signedIn()
+        && data().keys().hasOnly(['reporterId', 'targetType', 'targetId', 'reason', 'details', 'createdAt'])
+        && data().reporterId == uid()
+        && data().targetType in ['post', 'comment', 'user', 'message', 'review']
+        && isStr(data().targetId, 1, 200)
+        && data().reason in ['spam', 'harassment', 'unsafe', 'inaccurate', 'fake', 'other']
+        && data().details is string && data().details.size() <= 500
+        && data().createdAt == request.time;
     }
 
     // ─── Reviews ───────────────────────────────────────────────────────────
@@ -355,6 +411,8 @@ service cloud.firestore {
         allow read: if signedIn() && uid() in convo().participants;
         allow create: if signedIn()
           && uid() in convo().participants
+          // Not if the other person has blocked the sender.
+          && !exists(/databases/$(database)/documents/users/$(convo().participants[0] == uid() ? convo().participants[1] : convo().participants[0])/blocked/$(uid()))
           && data().keys().hasOnly(['senderId', 'text', 'createdAt'])
           && data().senderId == uid()
           && isStr(data().text, 1, 2000)

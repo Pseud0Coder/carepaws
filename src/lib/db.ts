@@ -46,7 +46,11 @@ import type {
   PostCategory,
   PrivateContact,
   Review,
+  ReportReason,
+  ReportTarget,
   SitterProfile,
+  StayLogEntry,
+  StayLogKind,
   UserProfile,
   Vouch,
 } from "./types";
@@ -605,4 +609,78 @@ export async function uploadAvatar(uid: string, file: File): Promise<string> {
   const r = ref(storage(), `users/${uid}/avatar.${ext}`);
   const snap = await uploadBytes(r, file, { contentType: file.type });
   return getDownloadURL(snap.ref);
+}
+
+// ─── Stay log ──────────────────────────────────────────────────────────────
+
+export function subscribeStayLog(bookingId: string, cb: (e: StayLogEntry[]) => void, onError?: (e: Error) => void) {
+  const q = query(collection(db(), "bookings", bookingId, "log"), orderBy("createdAt", "desc"));
+  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => fromDoc<StayLogEntry>(d))), onError);
+}
+
+const randomName = () => {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  return Array.from(bytes, (b) => b.toString(36).padStart(2, "0")).join("").slice(0, 24);
+};
+
+/** Uploads the photos, then adds the entry. Photos go in first so an entry never points at a missing file. */
+export async function addStayLogEntry(
+  bookingId: string,
+  author: { uid: string; role: "parent" | "sitter" },
+  kind: StayLogKind,
+  text: string,
+  photos: Blob[]
+) {
+  const paths: string[] = [];
+  for (const blob of photos) {
+    const path = `stays/${bookingId}/${randomName()}.jpg`;
+    await uploadBytes(ref(storage(), path), blob, { contentType: "image/jpeg" });
+    paths.push(path);
+  }
+  await addDoc(collection(db(), "bookings", bookingId, "log"), {
+    authorId: author.uid,
+    authorRole: author.role,
+    kind,
+    text: text.trim(),
+    photos: paths,
+    createdAt: serverTimestamp(),
+  });
+}
+
+export const getStayPhotoUrl = (path: string) => getDownloadURL(ref(storage(), path));
+
+// ─── Reports and blocking ──────────────────────────────────────────────────
+
+export async function submitReport(reporterId: string, targetType: ReportTarget, targetId: string, reason: ReportReason, details: string) {
+  await addDoc(collection(db(), "reports"), {
+    reporterId,
+    targetType,
+    targetId,
+    reason,
+    details: details.trim().slice(0, 500),
+    createdAt: serverTimestamp(),
+  });
+}
+
+export function subscribeBlocked(uid: string, cb: (ids: Set<string>) => void) {
+  return onSnapshot(
+    collection(db(), "users", uid, "blocked"),
+    (snap) => cb(new Set(snap.docs.map((d) => d.id))),
+    () => cb(new Set())
+  );
+}
+
+export async function blockUser(uid: string, otherId: string) {
+  await setDoc(doc(db(), "users", uid, "blocked", otherId), { createdAt: serverTimestamp() });
+}
+
+export async function unblockUser(uid: string, otherId: string) {
+  await deleteDoc(doc(db(), "users", uid, "blocked", otherId));
+}
+
+// ─── Account deletion ──────────────────────────────────────────────────────
+
+export async function deleteMyAccount() {
+  const call = httpsCallable<Record<string, never>, { deleted: boolean }>(functions(), "deleteAccount");
+  return (await call({})).data;
 }

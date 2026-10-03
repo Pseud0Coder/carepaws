@@ -9,7 +9,9 @@ import type { Conversation, Message, UserProfile } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import Avatar from "@/components/Avatar";
 import { sitterHref } from "@/components/SitterCard";
+import { useAuth } from "@/lib/auth-context";
 import RequireAuth from "@/components/RequireAuth";
+import SafetyMenu from "@/components/SafetyMenu";
 import { AppBar, EmptyState, FullScreenLoader, useToast } from "@/components/ui";
 
 function dayLabel(iso?: string) {
@@ -24,6 +26,7 @@ function dayLabel(iso?: string) {
 
 function Chat({ profile, id }: { profile: UserProfile; id: string }) {
   const toast = useToast();
+  const { blocked } = useAuth();
   const [convo, setConvo] = useState<Conversation | null | undefined>(undefined);
   const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
@@ -61,7 +64,7 @@ function Chat({ profile, id }: { profile: UserProfile; id: string }) {
       await sendMessage(id, profile.uid, t);
     } catch {
       setText(t);
-      toast("Message not sent. Try again.", "error");
+      toast("Message not sent. You may not be able to message this person.", "error");
     } finally {
       setSending(false);
     }
@@ -84,6 +87,7 @@ function Chat({ profile, id }: { profile: UserProfile; id: string }) {
             </span>
           )
         }
+        action={<SafetyMenu targetType="user" targetId={otherId} ownerId={otherId} ownerName={otherName.split(" ")[0]} label="Report or block" />}
       />
       <main className="flex-1 space-y-1.5 px-4 pt-4 pb-28">
         {messages.length === 0 && (
@@ -116,6 +120,11 @@ function Chat({ profile, id }: { profile: UserProfile; id: string }) {
         })}
         <div ref={endRef} />
       </main>
+      {blocked.has(otherId) ? (
+        <div className="pb-safe fixed inset-x-0 bottom-0 z-30 border-t border-oat-deep/60 bg-paper/95 px-5 py-4 text-center text-sm text-bark-soft backdrop-blur-md">
+          You’ve blocked {otherName.split(" ")[0]}. Unblock them from the menu above to message.
+        </div>
+      ) : (
       <form onSubmit={send} className="pb-safe fixed inset-x-0 bottom-0 z-30 border-t border-oat-deep/60 bg-paper/95 backdrop-blur-md">
         <div className="mx-auto flex max-w-lg items-end gap-2 px-3 py-2.5">
           <textarea
@@ -143,6 +152,7 @@ function Chat({ profile, id }: { profile: UserProfile; id: string }) {
           </button>
         </div>
       </form>
+      )}
     </div>
   );
 }

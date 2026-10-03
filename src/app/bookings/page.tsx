@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CalendarHeart, ClipboardCheck, CreditCard, MessageCircle, NotebookPen } from "lucide-react";
+import { BookOpenText, CalendarHeart, ClipboardCheck, CreditCard, MessageCircle, NotebookPen } from "lucide-react";
 import {
   acceptBooking,
   addReview,
@@ -173,6 +173,14 @@ function BookingCard({
           <Button size="sm" variant="secondary" onClick={() => onReview(b)}>
             <NotebookPen className="h-4 w-4" /> Review
           </Button>
+        )}
+        {b.paymentStatus === "paid" && (b.status === "confirmed" || b.status === "completed") && (
+          <Link
+            href={`/bookings/stay/?id=${b.id}`}
+            className="inline-flex h-9 items-center gap-2 rounded-full bg-moss-tint px-4 text-sm font-semibold text-moss active:opacity-80"
+          >
+            <BookOpenText className="h-4 w-4" /> Stay log
+          </Link>
         )}
         {b.status !== "pending" && b.declarations && (
           <Button size="sm" variant="ghost" onClick={() => onOpen(b)}>

@@ -2,6 +2,7 @@
 // (starts the Firestore emulator via firebase-tools and runs this file)
 import { readFileSync } from "node:fs";
 import { after, before, beforeEach, describe, test } from "node:test";
+import assert from "node:assert/strict";
 import { ref, uploadBytes, getBytes } from "firebase/storage";
 import {
   assertFails,
@@ -651,5 +652,123 @@ describe("declarations and the care sheet", () => {
     await assertFails(setDoc(doc(as("parent1"), "pets/p8"), { ...pet, vaccinated: "sometimes" }));
     await assertFails(setDoc(doc(as("parent1"), "pets/p7"), { ...pet, weightKg: 900 }));
     await assertFails(setDoc(doc(as("parent1"), "pets/p6"), { ...pet, id: "p6" })); // stray fields are refused
+  });
+});
+
+// ─── Stay log, reports and blocking ───────────────────────────────────────
+
+describe("stay log", () => {
+  const paidStay = () =>
+    seed((db) =>
+      setDoc(doc(db, "bookings/b1"), {
+        ...booking(), status: "confirmed", paymentStatus: "paid", createdAt: new Date(), updatedAt: new Date(),
+        declarations: { ...declarations(), acceptedAt: new Date() },
+      })
+    );
+  const entry = (over = {}) => ({ authorId: "sitter1", authorRole: "sitter", kind: "update", text: "Bruno ate well and had a long walk.", photos: [], createdAt: serverTimestamp(), ...over });
+  const add = (uid, data) => setDoc(doc(as(uid), "bookings/b1/log/e" + Math.random().toString(36).slice(2, 8)), data);
+  beforeEach(paidStay);
+
+  test("the sitter posts daily updates; the parent can read them", async () => {
+    await assertSucceeds(add("sitter1", entry()));
+    await assertSucceeds(add("sitter1", entry({ photos: ["stays/b1/abcdef12.jpg"], text: "" })));
+    const snap = await assertSucceeds(getDocs(collection(as("parent1"), "bookings/b1/log")));
+    assert.equal(snap.size, 2);
+  });
+  test("both sides can record condition at drop-off, pick-up and incidents; only the sitter posts updates", async () => {
+    await assertSucceeds(add("parent1", entry({ authorId: "parent1", authorRole: "parent", kind: "dropoff", text: "Small scratch on left ear, already healed." })));
+    await assertSucceeds(add("sitter1", entry({ kind: "dropoff", text: "Checked in. Left ear scratch noted." })));
+    await assertSucceeds(add("parent1", entry({ authorId: "parent1", authorRole: "parent", kind: "incident", text: "Concerned about a limp." })));
+    await assertFails(add("parent1", entry({ authorId: "parent1", authorRole: "parent", kind: "update" })));
+  });
+  test("outsiders can neither read nor write", async () => {
+    await assertFails(getDocs(collection(as("parent2"), "bookings/b1/log")));
+    await assertFails(add("parent2", entry({ authorId: "parent2", authorRole: "parent", kind: "incident" })));
+    await assertFails(getDocs(collection(anon(), "bookings/b1/log")));
+  });
+  test("no impersonation, empty entries, too many photos, or another stay's photos", async () => {
+    await assertFails(add("sitter1", entry({ authorId: "parent1" })));
+    await assertFails(add("sitter1", entry({ authorRole: "parent" })));
+    await assertFails(add("sitter1", entry({ text: "", photos: [] })));
+    await assertFails(add("sitter1", entry({ photos: ["stays/b1/a1.jpg", "stays/b1/a2.jpg", "stays/b1/a3.jpg", "stays/b1/a4.jpg", "stays/b1/a5.jpg"] })));
+    await assertFails(add("sitter1", entry({ photos: ["stays/other/abcdef12.jpg"] })));
+    await assertFails(add("sitter1", entry({ createdAt: new Date("2020-01-01") })));
+  });
+  test("entries are permanent: no edits, no deletes", async () => {
+    const ref2 = doc(as("sitter1"), "bookings/b1/log/keep");
+    await assertSucceeds(setDoc(ref2, entry()));
+    await assertFails(updateDoc(ref2, { text: "Changed my story" }));
+    await assertFails(deleteDoc(ref2));
+  });
+  test("only while a stay is paid and on", async () => {
+    await seed((db) => updateDoc(doc(db, "bookings/b1"), { paymentStatus: "pending" }));
+    await assertFails(add("sitter1", entry()));
+    await seed((db) => updateDoc(doc(db, "bookings/b1"), { paymentStatus: "paid", status: "cancelled" }));
+    await assertFails(add("sitter1", entry()));
+  });
+});
+
+describe("stay photos storage", () => {
+  const jpg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+  const st = (uid) => env.authenticatedContext(uid).storage();
+  const put = (uid, name = "photo1234.jpg", type = "image/jpeg") => uploadBytes(ref(st(uid), `stays/b1/${name}`), jpg, { contentType: type });
+  beforeEach(() => seed((db) => setDoc(doc(db, "bookings/b1"), { ...booking(), status: "confirmed", paymentStatus: "paid", createdAt: new Date(), updatedAt: new Date(), declarations: { ...declarations(), acceptedAt: new Date() } })));
+
+  test("only the two parties can add or view photos", async () => {
+    await assertSucceeds(put("sitter1"));
+    await assertSucceeds(put("parent1", "photo5678.jpg"));
+    await assertSucceeds(getBytes(ref(st("parent1"), "stays/b1/photo1234.jpg")));
+    await assertFails(put("parent2", "photo9999.jpg"));
+    await assertFails(getBytes(ref(st("parent2"), "stays/b1/photo1234.jpg")));
+  });
+  test("photos must be small JPEGs", async () => {
+    // Overwriting is blocked in production by `allow update, delete: if false`; the Storage emulator
+    // treats every upload as a create, so it can't be asserted here.
+    await assertFails(put("sitter1", "photo4321.jpg", "text/html"));
+    await assertFails(uploadBytes(ref(st("sitter1"), "stays/b1/photo7777.jpg"), new Uint8Array(7 * 1024 * 1024), { contentType: "image/jpeg" }));
+  });
+  test("not before the stay is paid", async () => {
+    await seed((db) => updateDoc(doc(db, "bookings/b1"), { paymentStatus: "pending" }));
+    await assertFails(put("sitter1"));
+  });
+});
+
+describe("reports and blocking", () => {
+  const report = (over = {}) => ({ reporterId: "parent1", targetType: "post", targetId: "p1", reason: "spam", details: "", createdAt: serverTimestamp(), ...over });
+
+  test("anyone signed in can report; nobody can read reports back", async () => {
+    await assertSucceeds(setDoc(doc(as("parent1"), "reports/r1"), report()));
+    await assertFails(getDoc(doc(as("parent1"), "reports/r1")));
+    await assertFails(getDocs(collection(as("parent1"), "reports")));
+    await assertFails(setDoc(doc(anon(), "reports/r2"), report()));
+  });
+  test("a report is attributed to its author and well-formed", async () => {
+    await assertFails(setDoc(doc(as("parent1"), "reports/r1"), report({ reporterId: "parent2" })));
+    await assertFails(setDoc(doc(as("parent1"), "reports/r1"), report({ reason: "dislike" })));
+    await assertFails(setDoc(doc(as("parent1"), "reports/r1"), report({ details: "x".repeat(501) })));
+    await assertFails(updateDoc(doc(as("parent1"), "reports/r1"), { reason: "other" }));
+  });
+  test("a user manages their own block list", async () => {
+    await assertSucceeds(setDoc(doc(as("sitter1"), "users/sitter1/blocked/parent1"), { createdAt: serverTimestamp() }));
+    await assertSucceeds(getDoc(doc(as("sitter1"), "users/sitter1/blocked/parent1")));
+    await assertFails(getDoc(doc(as("parent1"), "users/sitter1/blocked/parent1"))); // the blocked person can't see it
+    await assertFails(setDoc(doc(as("parent1"), "users/sitter1/blocked/parent2"), { createdAt: serverTimestamp() }));
+    await assertSucceeds(deleteDoc(doc(as("sitter1"), "users/sitter1/blocked/parent1")));
+  });
+  test("a blocked parent can't book that sitter", async () => {
+    await seed((db) => setDoc(doc(db, "users/sitter1/blocked/parent1"), { createdAt: new Date() }));
+    await assertFails(setDoc(doc(as("parent1"), "bookings/b1"), booking()));
+    await seed((db) => deleteDoc(doc(db, "users/sitter1/blocked/parent1")));
+    await assertSucceeds(setDoc(doc(as("parent1"), "bookings/b1"), booking()));
+  });
+  test("a blocked person can't message", async () => {
+    const convo = { parentId: "parent1", sitterId: "sitter1", participants: ["parent1", "sitter1"], names: {}, photos: {}, lastMessage: "", lastSenderId: "", lastMessageAt: new Date() };
+    await seed((db) => setDoc(doc(db, "conversations/parent1_sitter1"), convo));
+    const msg = { senderId: "parent1", text: "hello", createdAt: serverTimestamp() };
+    await assertSucceeds(setDoc(doc(as("parent1"), "conversations/parent1_sitter1/messages/m1"), msg));
+    await seed((db) => setDoc(doc(db, "users/sitter1/blocked/parent1"), { createdAt: new Date() }));
+    await assertFails(setDoc(doc(as("parent1"), "conversations/parent1_sitter1/messages/m2"), msg));
+    // The blocker can still write to them (their own choice to engage).
+    await assertSucceeds(setDoc(doc(as("sitter1"), "conversations/parent1_sitter1/messages/m3"), { ...msg, senderId: "sitter1" }));
   });
 });

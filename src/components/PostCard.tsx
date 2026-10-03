@@ -7,6 +7,7 @@ import { timeAgo } from "@/lib/format";
 import { ROLE_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/cn";
 import Avatar from "./Avatar";
+import SafetyMenu from "./SafetyMenu";
 import { Tag } from "./ui";
 
 export const CATEGORY_META: Record<PostCategory, { label: string; tone: "moss" | "clay" | "river" }> = {
@@ -66,6 +67,9 @@ export default function PostCard({
             <MessageSquare className="h-[18px] w-[18px]" /> {post.commentCount}
           </Link>
         )}
+        <span className="ml-auto">
+          <SafetyMenu inline targetType="post" targetId={post.id} ownerId={post.authorId} ownerName={post.author} label="Report or block" />
+        </span>
       </div>
     </article>
   );

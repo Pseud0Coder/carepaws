@@ -11,11 +11,12 @@ import type { CommunityComment, CommunityPost } from "@/lib/types";
 import { timeAgo } from "@/lib/format";
 import Avatar from "@/components/Avatar";
 import PostCard from "@/components/PostCard";
+import SafetyMenu from "@/components/SafetyMenu";
 import { AppBar, EmptyState, FullScreenLoader, useToast } from "@/components/ui";
 
 function PostScreen() {
   const id = useSearchParams().get("id") || "";
-  const { profile } = useAuth();
+  const { profile, blocked } = useAuth();
   const toast = useToast();
   const [post, setPost] = useState<CommunityPost | null | undefined>(undefined);
   const [comments, setComments] = useState<CommunityComment[]>([]);
@@ -67,13 +68,16 @@ function PostScreen() {
           <p className="py-4 text-sm text-bark-soft">No replies yet.</p>
         ) : (
           <ul className="space-y-4">
-            {comments.map((c) => (
+            {comments.filter((c) => !blocked.has(c.authorId)).map((c) => (
               <li key={c.id} className="flex gap-3">
                 <Avatar src={c.authorPhoto} name={c.author} size="sm" />
                 <div className="flex-1 rounded-2xl rounded-tl-md bg-paper p-3 shadow-soft">
-                  <p className="text-sm font-semibold text-bark">
-                    {c.author} <span className="font-normal text-stone">· {timeAgo(c.createdAt)}</span>
-                  </p>
+                  <div className="flex items-start justify-between">
+                    <p className="text-sm font-semibold text-bark">
+                      {c.author} <span className="font-normal text-stone">· {timeAgo(c.createdAt)}</span>
+                    </p>
+                    <SafetyMenu inline targetType="comment" targetId={`${id}/${c.id}`} ownerId={c.authorId} ownerName={c.author} label="Report or block" />
+                  </div>
                   <p className="mt-1 text-[15px] whitespace-pre-line text-bark-soft">{c.text}</p>
                 </div>
               </li>

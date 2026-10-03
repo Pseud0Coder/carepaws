@@ -257,3 +257,20 @@ export interface KycCase {
   /** Set when the raw ID images were deleted after the retention window. */
   purgedAt?: string;
 }
+
+export type StayLogKind = "update" | "dropoff" | "pickup" | "incident";
+
+/** An entry in a stay's shared log. Entries can't be edited or deleted. */
+export interface StayLogEntry {
+  id: string;
+  authorId: string;
+  authorRole: "parent" | "sitter";
+  kind: StayLogKind;
+  text: string;
+  /** Storage paths of the photos. */
+  photos: string[];
+  createdAt?: string;
+}
+
+export type ReportTarget = "post" | "comment" | "user" | "message" | "review";
+export type ReportReason = "spam" | "harassment" | "unsafe" | "inaccurate" | "fake" | "other";

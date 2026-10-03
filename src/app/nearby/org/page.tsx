@@ -10,6 +10,7 @@ import type { OrgProfile, SitterProfile, Vouch } from "@/lib/types";
 import { PET_EMOJI } from "@/lib/constants";
 import Avatar from "@/components/Avatar";
 import { CallButton, DirectionsButton, OrgTypeTag } from "@/components/OrgCard";
+import SafetyMenu from "@/components/SafetyMenu";
 import { sitterHref } from "@/components/SitterCard";
 import { AppBar, EmptyState, FullScreenLoader, Tag } from "@/components/ui";
 
@@ -46,7 +47,10 @@ function OrgScreen() {
 
   return (
     <>
-      <AppBar back="/nearby/" />
+      <AppBar
+        back="/nearby/"
+        action={<SafetyMenu targetType="user" targetId={org.uid} ownerId={org.uid} ownerName={org.displayName} label="Report or block this listing" />}
+      />
       <main className="pb-32">
         <section className="flex flex-col items-center px-5 pt-2 text-center">
           <Avatar src={org.photoURL} name={org.displayName} size="xl" className="shadow-lift" />
