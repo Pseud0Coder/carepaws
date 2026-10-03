@@ -82,6 +82,8 @@ export interface Vouch {
 export interface PrivateContact {
   email: string;
   phone?: string;
+  /** Record that the person confirmed they're an adult and accepted the terms. */
+  terms?: { version: number; over18: boolean; at: string };
 }
 
 export type Vaccination = "up_to_date" | "partial" | "none";

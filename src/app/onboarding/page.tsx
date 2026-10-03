@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Check, Compass, HeartHandshake, Home, PawPrint, Stethoscope, Warehouse } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
@@ -49,6 +50,7 @@ function Onboarding() {
   // Phone sign-ups get a placeholder name ("Member 1234"); ask for a real one.
   const [displayName, setDisplayName] = useState(/^Member\b/.test(profile?.displayName ?? "") ? "" : (profile?.displayName ?? ""));
   const [showOrgs, setShowOrgs] = useState(false);
+  const [agreed, setAgreed] = useState(false);
   const [location, setLocation] = useState(profile?.location ?? "");
   const [phone, setPhone] = useState("");
   const [bio, setBio] = useState(profile?.bio ?? "");
@@ -101,6 +103,8 @@ function Onboarding() {
     setError("");
     try {
       await saveProfile({ displayName: displayName.trim(), location: location.trim(), bio: bio.trim() });
+      // A private record that they're an adult and accepted the terms (DPDP treats under-18s specially).
+      await updateContact(user.uid, { terms: { version: 1, over18: true, at: new Date().toISOString() } });
       // People keep their phone private; organisations publish theirs on the listing form.
       if (!isOrgRole(role) && phone.trim()) await updateContact(user.uid, { phone: phone.trim() });
       setStep("details");
@@ -203,12 +207,30 @@ function Onboarding() {
               }
             />
           </Field>
+          <label className="flex gap-3 rounded-2xl bg-oat/60 p-4 text-sm">
+            <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} className="mt-0.5 h-5 w-5 shrink-0 accent-[var(--moss)]" />
+            <span className="text-bark-soft">
+              I’m 18 or older, and I agree to the{" "}
+              <Link href="/legal/#terms" className="font-semibold text-moss">
+                Terms
+              </Link>
+              ,{" "}
+              <Link href="/legal/#care-policy" className="font-semibold text-moss">
+                Pet care policy
+              </Link>{" "}
+              and{" "}
+              <Link href="/legal/#privacy" className="font-semibold text-moss">
+                Privacy notice
+              </Link>
+              .
+            </span>
+          </label>
           <ErrorNote>{error}</ErrorNote>
           <div className="flex gap-3 pt-2">
             <Button type="button" variant="secondary" onClick={() => setStep("role")} className="flex-1">
               Back
             </Button>
-            <Button type="submit" loading={busy} className="flex-[2]">
+            <Button type="submit" loading={busy} disabled={!agreed} className="flex-[2]">
               Continue
             </Button>
           </div>

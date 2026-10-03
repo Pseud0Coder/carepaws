@@ -195,8 +195,8 @@ export default function KycForm({
           <Field label="Last 4 characters of the ID number" hint="Never enter the full number.">
             <Input value={idLast4} onChange={(e) => setIdLast4(e.target.value.replace(/[^A-Za-z0-9]/g, "").slice(0, 4))} maxLength={4} autoComplete="off" className="uppercase tracking-widest" />
           </Field>
-          <PhotoField label="ID: front" file={idFront} onChange={setIdFront} accept="image/*,application/pdf" capture="environment" hint="Make sure all text is readable." />
-          {idMeta.back && <PhotoField label="ID: back" file={idBack} onChange={setIdBack} accept="image/*,application/pdf" capture="environment" />}
+          <PhotoField label="ID: front" file={idFront} onChange={setIdFront} accept="image/*,application/pdf" hint="A photo or a downloaded PDF. Make sure all text is readable." />
+          {idMeta.back && <PhotoField label="ID: back" file={idBack} onChange={setIdBack} accept="image/*,application/pdf" />}
           <PhotoField label="Selfie" file={selfie} onChange={setSelfie} capture="user" hint="Face the camera in good light. We match it to your ID." />
 
           <Field label="Home address">
