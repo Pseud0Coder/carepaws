@@ -5,6 +5,7 @@ export const PET_KINDS = ["Dog", "Cat", "Bird", "Rabbit", "Small pet", "Reptile"
 
 export const SERVICES = [
   "Overnight stays",
+  "House sitting",
   "Drop-in visits",
   "Dog walking",
   "Medication",
@@ -77,3 +78,53 @@ export const SITTER_DECLARATIONS = [
   { key: "emergencyPlan", text: "If a pet seems unwell or is injured, I’ll contact the pet parent and a vet straight away, and log it in the app." },
   { key: "reportIncidents", text: "I’ll report any injury, escape, fight or other incident to the pet parent immediately and record it in the stay log." },
 ] as const;
+
+// ─── Pet care sheet ────────────────────────────────────────────────────────
+
+export const VACCINATION = [
+  { id: "up_to_date", label: "Up to date" },
+  { id: "partial", label: "Partly vaccinated" },
+  { id: "none", label: "Not vaccinated" },
+] as const;
+
+/** Behaviour a sitter needs to know about. Honest answers here protect the pet, the sitter and other animals. */
+export const TEMPERAMENTS = [
+  "Friendly with dogs",
+  "Friendly with cats",
+  "Good with children",
+  "Shy or anxious",
+  "Separation anxiety",
+  "Reactive on the leash",
+  "Afraid of loud noises",
+  "Escape artist",
+  "Guards food or toys",
+  "Has bitten someone",
+] as const;
+
+// ─── Pet parent declarations ───────────────────────────────────────────────
+
+/** Version of the declarations below. Bump when the wording changes; each booking stores the version signed. */
+export const DECLARATIONS_VERSION = 1;
+
+/** Affirmed on every booking. Each one is stored with the booking, with the date, as the record of what was disclosed. */
+export const PARENT_DECLARATIONS = [
+  { key: "vaccinated", text: "My pet’s core vaccinations (including rabies for dogs and cats) are up to date, and I can show the records if asked." },
+  { key: "parasiteControl", text: "My pet is on regular flea, tick and worming prevention." },
+  { key: "healthDisclosed", text: "I’ve told the sitter about every medical condition, allergy, medication and dietary need, in the care sheet." },
+  { key: "behaviourDisclosed", text: "I’ve disclosed any history of biting, aggression, escaping, destructive behaviour, separation anxiety or fears. Nothing is left out." },
+  { key: "noContagious", text: "My pet shows no sign of a contagious illness right now, and isn’t pregnant or in heat (or I’ve told the sitter)." },
+  { key: "ownerAuthorised", text: "I’m the pet’s owner, or authorised to book for them, and everything I’ve entered is true." },
+  { key: "conditionRecord", text: "I understand pre-existing conditions and injuries aren’t the sitter’s responsibility. I’ll record my pet’s condition at drop-off in the app." },
+  { key: "inherentRisk", text: "I understand pets can get stressed, ill or hurt even with good care. I’ll raise any concern within 24 hours, using the stay log and photos." },
+  { key: "emergencyAuth", text: "If I can’t be reached, I authorise the sitter to get emergency veterinary treatment up to the limit below, and I’ll reimburse reasonable emergency costs." },
+  { key: "policy", text: "I agree to the Terms and the Pet care policy." },
+] as const;
+
+/** Added when care happens at the pet parent's home. This is where "my house is pet-proofed" lives. */
+export const HOME_DECLARATIONS = [
+  { key: "homePetProofed", text: "My home is pet-proofed: toxic plants, chemicals, medicines and food are out of reach; cords, small objects and bins are secured; windows, balconies and gates are safe." },
+  { key: "homeHazardsDisclosed", text: "I’ve told the sitter about any hazards, off-limits areas, and any cameras or recording devices in my home." },
+  { key: "homeAccessSafe", text: "I’ll share keys and access codes only through the app chat, and the sitter will have what they need (food, supplies, leash, carrier)." },
+] as const;
+
+export const EMERGENCY_LIMITS = [2000, 5000, 10000, 25000, 50000] as const;

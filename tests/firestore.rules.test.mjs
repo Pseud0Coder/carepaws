@@ -59,6 +59,21 @@ const vet = {
 const rescue = { ...vet, uid: "rescue1", displayName: "Pawsitive Purpose Rescue", role: "rescue" };
 const parent = { uid: "parent1", displayName: "Pat Parent", photoURL: null, role: "parent", onboarded: true };
 
+const careSheet = { vaccinated: "up_to_date", vaccinatedOn: "2026-03-01", tempers: ["Friendly with dogs"], medical: "None", vetName: "Dr Rao", vetPhone: "+91 00000 00005" };
+function declarations(over = {}) {
+  return {
+    version: 1,
+    vaccinated: true, parasiteControl: true, healthDisclosed: true, behaviourDisclosed: true, noContagious: true,
+    ownerAuthorised: true, conditionRecord: true, inherentRisk: true, emergencyAuth: true, policy: true,
+    emergencyLimit: 10000,
+    emergencyContactName: "Pat Parent",
+    emergencyContactPhone: "+91 00000 00003",
+    acceptedAt: serverTimestamp(),
+    ...over,
+  };
+}
+const homeDecl = { homePetProofed: true, homeHazardsDisclosed: true, homeAccessSafe: true };
+
 function booking(over = {}) {
   return {
     sitterId: "sitter1",
@@ -79,12 +94,16 @@ function booking(over = {}) {
     status: "pending",
     paymentStatus: "pending",
     notes: "",
+    careLocation: "sitter_home",
+    petCare: careSheet,
+    declarations: declarations(),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
     ...over,
   };
 }
 
+const omit = (o, ...keys) => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
 const as = (uid) => env.authenticatedContext(uid).firestore();
 const anon = () => env.unauthenticatedContext().firestore();
 
@@ -189,7 +208,8 @@ describe("bookings", () => {
     });
     test("only the sitter accepts or declines", async () => {
       await assertFails(updateDoc(doc(as("parent1"), "bookings/b1"), { status: "confirmed" }));
-      await assertSucceeds(updateDoc(doc(as("sitter1"), "bookings/b1"), { status: "confirmed" }));
+      await assertFails(updateDoc(doc(as("sitter1"), "bookings/b1"), { status: "confirmed" })); // must acknowledge
+      await assertSucceeds(updateDoc(doc(as("sitter1"), "bookings/b1"), { status: "confirmed", sitterAckAt: serverTimestamp() }));
     });
     test("nobody can mark a booking paid from the client", async () => {
       await assertFails(updateDoc(doc(as("parent1"), "bookings/b1"), { paymentStatus: "paid" }));
@@ -400,7 +420,7 @@ describe("vouches", () => {
   test("only sitters can be vouched for; notes are capped", async () => {
     await assertFails(setDoc(doc(as("vet1"), "vouches/vet1_parent1"), vouch({ sitterId: "parent1" })));
     await assertFails(setDoc(doc(as("vet1"), "vouches/vet1_sitter1"), vouch({ note: "x".repeat(301) })));
-    await assertSucceeds(setDoc(doc(as("vet1"), "vouches/vet1_sitter1"), Object.fromEntries(Object.entries(vouch()).filter(([k]) => k !== "note"))));
+    await assertSucceeds(setDoc(doc(as("vet1"), "vouches/vet1_sitter1"), omit(vouch(), "note")));
   });
   test("only the organisation can edit its note or withdraw", async () => {
     await seed((db) => setDoc(doc(db, "vouches/vet1_sitter1"), { ...vouch(), createdAt: new Date() }));
@@ -490,7 +510,7 @@ describe("sitter KYC", () => {
     await assertFails(setDoc(doc(db, "kyc/ns1"), caseDoc({ dob: `${y - 17}-01-01` })));
     await assertFails(setDoc(doc(db, "kyc/ns1"), caseDoc({ idLast4: "123456789012" }))); // a full number must never be stored
     await assertFails(setDoc(doc(db, "kyc/ns1"), caseDoc({ pincode: "40005" })));
-    await assertFails(setDoc(doc(db, "kyc/ns1"), (({ selfie, ...r }) => r)(caseDoc())));
+    await assertFails(setDoc(doc(db, "kyc/ns1"), omit(caseDoc(), "selfie")));
   });
   test("files must be the sitter's own", async () => {
     await assertFails(setDoc(doc(withPhone("ns1"), "kyc/ns1"), caseDoc({ idFront: "kyc/someone-else/id-front.jpg" })));
@@ -498,19 +518,19 @@ describe("sitter KYC", () => {
   test("PAN has no address, so it needs an address proof", async () => {
     const db = withPhone("ns1");
     const pan = { idType: "pan", idLast4: "234F" };
-    const noBack = (({ idBack, ...r }) => r)(caseDoc(pan));
+    const noBack = omit(caseDoc(pan), "idBack");
     await assertFails(setDoc(doc(db, "kyc/ns1"), noBack));
     await assertSucceeds(setDoc(doc(db, "kyc/ns1"), { ...noBack, addressProof: "kyc/ns1/address-proof.jpg" }));
   });
   test("an ID that has a back side needs it", async () => {
-    await assertFails(setDoc(doc(withPhone("ns1"), "kyc/ns1"), (({ idBack, ...r }) => r)(caseDoc())));
+    await assertFails(setDoc(doc(withPhone("ns1"), "kyc/ns1"), omit(caseDoc(), "idBack")));
     await assertSucceeds(setDoc(doc(withPhone("ns1"), "kyc/ns1"), caseDoc()));
   });
   test("every care standard and the consent are mandatory", async () => {
     const db = withPhone("ns1");
     await assertFails(setDoc(doc(db, "kyc/ns1"), caseDoc({ consent: false })));
     await assertFails(setDoc(doc(db, "kyc/ns1"), caseDoc({ declarations: { ...caseDoc().declarations, safeHome: false } })));
-    await assertFails(setDoc(doc(db, "kyc/ns1"), caseDoc({ declarations: (({ humaneHandling, ...r }) => r)(caseDoc().declarations) })));
+    await assertFails(setDoc(doc(db, "kyc/ns1"), caseDoc({ declarations: omit(caseDoc().declarations, "humaneHandling") })));
   });
   test("a client can never approve itself", async () => {
     await assertFails(setDoc(doc(withPhone("ns1"), "kyc/ns1"), caseDoc({ status: "approved" })));
@@ -575,5 +595,61 @@ describe("KYC document storage", () => {
     await assertFails(put("ns1", "kyc/ns1/id-front.jpg"));
     await seed((db) => setDoc(doc(db, "kyc/ns1"), { status: "rejected" }));
     await assertSucceeds(put("ns1", "kyc/ns1/id-front.jpg"));
+  });
+});
+
+describe("declarations and the care sheet", () => {
+  const make = (over) => setDoc(doc(as("parent1"), "bookings/b1"), booking(over));
+
+  test("a booking with every declaration affirmed and a vaccinated pet is accepted", async () => {
+    await assertSucceeds(make({}));
+  });
+  test("each declaration is mandatory, and must be true", async () => {
+    for (const key of ["vaccinated", "parasiteControl", "healthDisclosed", "behaviourDisclosed", "noContagious", "ownerAuthorised", "conditionRecord", "inherentRisk", "emergencyAuth", "policy"]) {
+      await assertFails(make({ declarations: declarations({ [key]: false }) }));
+      await assertFails(make({ declarations: omit(declarations(), key) }));
+    }
+  });
+  test("declarations are signed with the server time, at the current version", async () => {
+    await assertFails(make({ declarations: declarations({ acceptedAt: new Date("2020-01-01") }) }));
+    await assertFails(make({ declarations: declarations({ version: 2 }) }));
+  });
+  test("an emergency spending limit and an emergency contact are required", async () => {
+    await assertFails(make({ declarations: declarations({ emergencyLimit: 100 }) }));
+    await assertFails(make({ declarations: declarations({ emergencyLimit: 1e7 }) }));
+    await assertFails(make({ declarations: omit(declarations(), "emergencyContactPhone") }));
+    await assertFails(make({ declarations: declarations({ emergencyContactPhone: "call me" }) }));
+  });
+  test("the care sheet must say the pet's vaccinations are up to date", async () => {
+    await assertFails(make({ petCare: { ...careSheet, vaccinated: "partial" } }));
+    await assertFails(make({ petCare: omit(careSheet, "vaccinated") }));
+    await assertFails(make({ petCare: { ...careSheet, bio: "extra field" } }));
+  });
+  test("care at the parent's home needs the home declarations and a sitter who offers it", async () => {
+    await seed((db) => updateDoc(doc(db, "users/sitter1"), { services: ["Overnight stays", "House sitting"] }));
+    await assertFails(make({ careLocation: "parent_home" })); // no home declarations
+    await assertFails(make({ careLocation: "parent_home", declarations: declarations({ ...homeDecl, homePetProofed: false }) }));
+    await assertSucceeds(make({ careLocation: "parent_home", declarations: declarations(homeDecl) }));
+  });
+  test("a sitter who doesn't offer house sitting can't be booked for it", async () => {
+    await assertFails(make({ careLocation: "parent_home", declarations: declarations(homeDecl) }));
+  });
+  test("declarations can't be edited after the booking exists", async () => {
+    await seed((db) => setDoc(doc(db, "bookings/b1"), { ...booking(), createdAt: new Date(), updatedAt: new Date(), declarations: { ...declarations(), acceptedAt: new Date() } }));
+    await assertFails(updateDoc(doc(as("parent1"), "bookings/b1"), { "declarations.emergencyLimit": 100000 }));
+    await assertFails(updateDoc(doc(as("parent1"), "bookings/b1"), { petCare: { vaccinated: "up_to_date" } }));
+  });
+  test("accepting needs the sitter's acknowledgement, from the sitter only", async () => {
+    await seed((db) => setDoc(doc(db, "bookings/b1"), { ...booking(), createdAt: new Date(), updatedAt: new Date(), declarations: { ...declarations(), acceptedAt: new Date() } }));
+    await assertFails(updateDoc(doc(as("parent1"), "bookings/b1"), { status: "confirmed", sitterAckAt: serverTimestamp() }));
+    await assertFails(updateDoc(doc(as("sitter1"), "bookings/b1"), { status: "confirmed", sitterAckAt: new Date() }));
+    await assertSucceeds(updateDoc(doc(as("sitter1"), "bookings/b1"), { status: "confirmed", sitterAckAt: serverTimestamp(), updatedAt: serverTimestamp() }));
+  });
+  test("pet care sheets are validated and owner-only", async () => {
+    const pet = { ownerId: "parent1", name: "Bruno", type: "Dog", createdAt: serverTimestamp() };
+    await assertSucceeds(setDoc(doc(as("parent1"), "pets/p9"), { ...pet, ...careSheet, weightKg: 18.5, microchip: true, neutered: true, sex: "male" }));
+    await assertFails(setDoc(doc(as("parent1"), "pets/p8"), { ...pet, vaccinated: "sometimes" }));
+    await assertFails(setDoc(doc(as("parent1"), "pets/p7"), { ...pet, weightKg: 900 }));
+    await assertFails(setDoc(doc(as("parent1"), "pets/p6"), { ...pet, id: "p6" })); // stray fields are refused
   });
 });

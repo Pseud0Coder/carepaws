@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CalendarHeart, CreditCard, MessageCircle, NotebookPen } from "lucide-react";
+import { CalendarHeart, ClipboardCheck, CreditCard, MessageCircle, NotebookPen } from "lucide-react";
 import {
+  acceptBooking,
   addReview,
   getContact,
   getReviewedBookingIds,
@@ -19,6 +20,7 @@ import { PET_EMOJI } from "@/lib/constants";
 import { formatINR, formatRange, todayISO } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import Avatar from "@/components/Avatar";
+import { CareSheetView, DeclarationsView } from "@/components/CareSheetView";
 import RequireAuth from "@/components/RequireAuth";
 import StarRating from "@/components/StarRating";
 import { AppBar, Button, EmptyState, Sheet, Skeleton, Tag, TextArea, useToast } from "@/components/ui";
@@ -47,11 +49,14 @@ function BookingCard({
   me,
   reviewed,
   onReview,
+  onOpen,
 }: {
   b: Booking;
   me: UserProfile;
   reviewed: boolean;
   onReview: (b: Booking) => void;
+  /** Opens the care sheet and declarations. */
+  onOpen: (b: Booking) => void;
 }) {
   const toast = useToast();
   const router = useRouter();
@@ -141,8 +146,8 @@ function BookingCard({
       <div className="mt-3 flex flex-wrap gap-2">
         {isSitter && b.status === "pending" && (
           <>
-            <Button size="sm" onClick={() => status("confirmed", "Accepted. We've asked them to pay.")} loading={busy === "confirmed"}>
-              Accept
+            <Button size="sm" onClick={() => onOpen(b)}>
+              <ClipboardCheck className="h-4 w-4" /> Review & accept
             </Button>
             <Button size="sm" variant="secondary" onClick={() => status("declined", "Request declined.")} loading={busy === "declined"}>
               Decline
@@ -169,6 +174,11 @@ function BookingCard({
             <NotebookPen className="h-4 w-4" /> Review
           </Button>
         )}
+        {b.status !== "pending" && b.declarations && (
+          <Button size="sm" variant="ghost" onClick={() => onOpen(b)}>
+            <ClipboardCheck className="h-4 w-4" /> Care sheet
+          </Button>
+        )}
         {b.status !== "cancelled" && b.status !== "declined" && (
           <Button size="sm" variant="ghost" onClick={chat} loading={busy === "chat"} className="ml-auto">
             <MessageCircle className="h-4 w-4" /> Message
@@ -186,6 +196,8 @@ function Bookings({ profile }: { profile: UserProfile }) {
   const [reviewed, setReviewed] = useState<Set<string>>(new Set());
   const [tab, setTab] = useState<Tab>(isSitter ? "requests" : "upcoming");
   const [reviewing, setReviewing] = useState<Booking | null>(null);
+  const [viewing, setViewing] = useState<Booking | null>(null);
+  const [deciding, setDeciding] = useState<"accept" | "decline" | null>(null);
   const [rating, setRating] = useState(5);
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
@@ -269,9 +281,78 @@ function Bookings({ profile }: { profile: UserProfile }) {
             }
           />
         ) : (
-          grouped[tab].map((b) => <BookingCard key={b.id} b={b} me={profile} reviewed={reviewed.has(b.id)} onReview={setReviewing} />)
+          grouped[tab].map((b) => <BookingCard key={b.id} b={b} me={profile} reviewed={reviewed.has(b.id)} onReview={setReviewing} onOpen={setViewing} />)
         )}
       </main>
+
+      <Sheet open={!!viewing} onClose={() => setViewing(null)} title={viewing?.status === "pending" && isSitter ? "Review before accepting" : "Care sheet & declarations"}>
+        {viewing && (
+          <>
+            <p className="mb-4 text-sm text-bark-soft">
+              {viewing.petName} · {formatRange(viewing.startDate, viewing.endDate)} · {viewing.careLocation === "parent_home" ? `at ${viewing.parentName}’s home` : `at ${viewing.sitterName}’s home`}
+            </p>
+            <h3 className="mb-1 font-display text-lg text-bark">Care sheet</h3>
+            <div className="mb-5 rounded-2xl bg-paper px-4 py-1 shadow-soft">
+              <CareSheetView care={viewing.petCare} notes={viewing.petNotes} />
+            </div>
+            {viewing.notes && (
+              <p className="mb-5 rounded-2xl bg-oat/60 p-3 text-sm text-bark-soft">
+                <span className="font-semibold text-bark">Note from {viewing.parentName}: </span>
+                {viewing.notes}
+              </p>
+            )}
+            <h3 className="mb-2 font-display text-lg text-bark">{viewing.parentName}’s declarations</h3>
+            <DeclarationsView booking={viewing} showContact={!(isSitter && viewing.status === "pending")} />
+            {isSitter && viewing.status === "pending" && (
+              <div className="mt-5 space-y-3">
+                <p className="text-xs text-bark-soft">
+                  By accepting you confirm you’ve read this and are comfortable caring for {viewing.petName}. It’s saved on the booking.
+                </p>
+                <Button
+                  block
+                  size="lg"
+                  loading={deciding === "accept"}
+                  disabled={!!deciding}
+                  onClick={async () => {
+                    setDeciding("accept");
+                    try {
+                      await acceptBooking(viewing.id);
+                      setViewing(null);
+                      toast("Accepted. We’ve asked them to pay.");
+                    } catch {
+                      toast("Couldn’t accept. Try again.", "error");
+                    } finally {
+                      setDeciding(null);
+                    }
+                  }}
+                >
+                  I’ve reviewed this. Accept
+                </Button>
+                <Button
+                  block
+                  variant="secondary"
+                  loading={deciding === "decline"}
+                  disabled={!!deciding}
+                  onClick={async () => {
+                    setDeciding("decline");
+                    try {
+                      await setBookingStatus(viewing.id, "declined");
+                      setViewing(null);
+                      toast("Request declined.");
+                    } catch {
+                      toast("Couldn’t decline. Try again.", "error");
+                    } finally {
+                      setDeciding(null);
+                    }
+                  }}
+                >
+                  Decline
+                </Button>
+              </div>
+            )}
+          </>
+        )}
+      </Sheet>
 
       <Sheet open={!!reviewing} onClose={() => setReviewing(null)} title={`How was ${reviewing?.sitterName.split(" ")[0]}?`}>
         <div className="flex justify-center py-2">

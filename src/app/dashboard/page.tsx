@@ -37,7 +37,7 @@ import PetForm from "@/components/PetForm";
 import RequireAuth from "@/components/RequireAuth";
 import { sitterHref } from "@/components/SitterCard";
 import SitterSettingsForm from "@/components/SitterSettingsForm";
-import { AppBar, Button, ErrorNote, Field, Input, SectionTitle, Sheet, TextArea, useToast } from "@/components/ui";
+import { AppBar, Button, ErrorNote, Field, Input, SectionTitle, Sheet, Tag, TextArea, useToast } from "@/components/ui";
 
 function Row({ icon, label, detail, onClick, href, danger }: {
   icon: React.ReactNode;
@@ -108,6 +108,9 @@ function Pets({ uid }: { uid: string }) {
             </div>
             <p className="mt-3 font-semibold text-bark">{p.name}</p>
             <p className="truncate text-xs text-bark-soft">{[p.breed || p.type, p.age].filter(Boolean).join(" · ")}</p>
+            <button onClick={() => setEditing(p)} className="mt-2">
+              {p.vaccinated === "up_to_date" ? <Tag tone="moss">Care sheet ready</Tag> : <Tag tone="honey">Complete care sheet</Tag>}
+            </button>
           </div>
         ))}
       </div>

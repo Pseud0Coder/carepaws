@@ -158,9 +158,21 @@ service cloud.firestore {
     // Only the owner can see pets; sitters get a snapshot copied into bookings.
     match /pets/{petId} {
       function validPet(m) {
-        return m.keys().hasOnly(['ownerId', 'name', 'type', 'breed', 'age', 'notes', 'createdAt'])
+        return m.keys().hasOnly(['ownerId', 'name', 'type', 'breed', 'age', 'notes', 'createdAt',
+              'sex', 'neutered', 'weightKg', 'vaccinated', 'vaccinatedOn', 'tempers', 'medical',
+              'medications', 'diet', 'vetName', 'vetPhone', 'microchip'])
           && isStr(m.name, 1, 40) && isStr(m.type, 1, 20)
-          && optStr(m, 'breed', 60) && optStr(m, 'age', 20) && optStr(m, 'notes', 1000);
+          && optStr(m, 'breed', 60) && optStr(m, 'age', 20) && optStr(m, 'notes', 1000)
+          && (!('sex' in m) || m.sex in ['male', 'female'])
+          && (!('neutered' in m) || m.neutered is bool)
+          && (!('microchip' in m) || m.microchip is bool)
+          && (!('weightKg' in m) || (m.weightKg is number && m.weightKg > 0 && m.weightKg <= 120))
+          && (!('vaccinated' in m) || m.vaccinated in ['up_to_date', 'partial', 'none'])
+          && (!('vaccinatedOn' in m) || isDay(m.vaccinatedOn))
+          && (!('tempers' in m) || (m.tempers is list && m.tempers.size() <= 12))
+          && optStr(m, 'medical', 500) && optStr(m, 'medications', 500) && optStr(m, 'diet', 500)
+          && optStr(m, 'vetName', 80)
+          && (!('vetPhone' in m) || (m.vetPhone is string && (m.vetPhone == '' || m.vetPhone.matches('^[+0-9 ()-]{7,20}$'))));
       }
       allow read: if signedIn() && resource.data.ownerId == uid();
       allow create: if signedIn() && data().ownerId == uid() && validPet(data());
@@ -174,13 +186,44 @@ service cloud.firestore {
       function isParent() { return uid() == resource.data.parentId; }
       function isSitter() { return uid() == resource.data.sitterId; }
 
+      // The care sheet snapshot. A booking can only be made for a pet whose vaccinations are up to date,
+      // which keeps the "vaccinated" declaration consistent with what the sitter reads.
+      function validPetCare(c) {
+        return c is map
+          && c.keys().hasOnly(['sex', 'neutered', 'weightKg', 'vaccinated', 'vaccinatedOn', 'tempers', 'medical',
+                'medications', 'diet', 'vetName', 'vetPhone', 'microchip'])
+          && c.vaccinated == 'up_to_date'
+          && (!('tempers' in c) || (c.tempers is list && c.tempers.size() <= 12))
+          && optStr(c, 'medical', 500) && optStr(c, 'medications', 500) && optStr(c, 'diet', 500)
+          && optStr(c, 'vetName', 80) && optStr(c, 'vetPhone', 20);
+      }
+
+      // The pet parent's signed declarations: every one must be affirmed, with a version and the signing time.
+      function validDeclarations(d, atHome) {
+        return d is map
+          && d.keys().hasOnly(['version', 'vaccinated', 'parasiteControl', 'healthDisclosed', 'behaviourDisclosed',
+                'noContagious', 'ownerAuthorised', 'conditionRecord', 'inherentRisk', 'emergencyAuth', 'policy',
+                'homePetProofed', 'homeHazardsDisclosed', 'homeAccessSafe', 'emergencyLimit',
+                'emergencyContactName', 'emergencyContactPhone', 'preferredVetName', 'preferredVetPhone', 'acceptedAt'])
+          && d.version == 1
+          && d.vaccinated == true && d.parasiteControl == true && d.healthDisclosed == true
+          && d.behaviourDisclosed == true && d.noContagious == true && d.ownerAuthorised == true
+          && d.conditionRecord == true && d.inherentRisk == true && d.emergencyAuth == true && d.policy == true
+          && (!atHome || (d.homePetProofed == true && d.homeHazardsDisclosed == true && d.homeAccessSafe == true))
+          && d.emergencyLimit is int && d.emergencyLimit >= 1000 && d.emergencyLimit <= 100000
+          && isStr(d.emergencyContactName, 2, 60)
+          && d.emergencyContactPhone is string && d.emergencyContactPhone.matches('^[+0-9 ()-]{7,20}$')
+          && optStr(d, 'preferredVetName', 80) && optStr(d, 'preferredVetPhone', 20)
+          && d.acceptedAt == request.time;
+      }
+
       function validNew(b) {
         let sitter = userDoc(b.sitterId);
         let pet = get(/databases/$(database)/documents/pets/$(b.petId)).data;
         return b.keys().hasOnly(['sitterId', 'sitterName', 'sitterPhoto', 'parentId', 'parentName',
               'parentPhoto', 'petId', 'petName', 'petType', 'petNotes', 'startDate', 'endDate',
               'nights', 'pricePerNight', 'totalPrice', 'status', 'paymentStatus', 'notes',
-              'createdAt', 'updatedAt'])
+              'careLocation', 'petCare', 'declarations', 'createdAt', 'updatedAt'])
           && b.parentId == uid()
           && userDoc(uid()).role == 'parent'
           && b.sitterId != uid()
@@ -195,14 +238,18 @@ service cloud.firestore {
           // Price is taken from the sitter's own profile, never trusted from the client.
           && b.pricePerNight == sitter.pricePerNight
           && b.totalPrice == b.nights * sitter.pricePerNight
-          && isStr(b.notes, 0, 1000);
+          && isStr(b.notes, 0, 1000)
+          && b.careLocation in ['sitter_home', 'parent_home']
+          && (b.careLocation == 'sitter_home' || 'House sitting' in sitter.services)
+          && validPetCare(b.petCare)
+          && validDeclarations(b.declarations, b.careLocation == 'parent_home');
       }
 
       function validTransition() {
         let from = resource.data.status;
         let to = request.resource.data.status;
         let paid = resource.data.paymentStatus == 'paid';
-        return (isSitter() && from == 'pending' && to in ['confirmed', 'declined'])
+        return (isSitter() && from == 'pending' && to == 'declined')
           || (isParent() && from == 'pending' && to == 'cancelled')
           || ((isParent() || isSitter()) && from == 'confirmed' && !paid && to == 'cancelled')
           || (isSitter() && from == 'confirmed' && paid && to == 'completed'
@@ -213,9 +260,12 @@ service cloud.firestore {
       allow create: if signedIn() && validNew(data());
       // Clients may only move the status along the allowed path.
       // Payment fields are written by the verifyPayment Cloud Function.
-      allow update: if signedIn() && (isParent() || isSitter())
-        && changed().hasOnly(['status', 'updatedAt'])
-        && validTransition();
+      allow update: if signedIn() && (isParent() || isSitter()) && (
+        // Accepting means the sitter has reviewed the declarations and care sheet, and says so.
+        (isSitter() && resource.data.status == 'pending' && data().status == 'confirmed'
+          && changed().hasOnly(['status', 'updatedAt', 'sitterAckAt'])
+          && data().sitterAckAt == request.time)
+        || (changed().hasOnly(['status', 'updatedAt']) && validTransition()));
       allow delete: if false;
     }
 

@@ -3,12 +3,13 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CalendarDays, Check, Info, Plus } from "lucide-react";
-import { addPet, createBooking, getPets, getSitter } from "@/lib/db";
-import type { Pet, SitterProfile, UserProfile } from "@/lib/types";
+import { addPet, createBooking, getContact, getPets, getSitter, updatePet, type DeclarationInput } from "@/lib/db";
+import type { CareLocation, Pet, SitterProfile, UserProfile } from "@/lib/types";
 import { PET_EMOJI } from "@/lib/constants";
 import { formatDay, formatINR, nightsBetween, todayISO } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import Avatar from "@/components/Avatar";
+import DeclarationsSheet from "@/components/DeclarationsSheet";
 import PetForm from "@/components/PetForm";
 import RequireAuth from "@/components/RequireAuth";
 import { ExplorerGate } from "@/components/UpgradeSheet";
@@ -30,7 +31,10 @@ function BookingForm({ profile }: { profile: UserProfile }) {
   const [end, setEnd] = useState(todayISO(3));
   const [notes, setNotes] = useState("");
   const [addingPet, setAddingPet] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [editingPet, setEditingPet] = useState<Pet | null>(null);
+  const [careLocation, setCareLocation] = useState<CareLocation>("sitter_home");
+  const [declOpen, setDeclOpen] = useState(false);
+  const [contactPhone, setContactPhone] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -39,6 +43,7 @@ function BookingForm({ profile }: { profile: UserProfile }) {
       setPets(p);
       if (p.length === 1) setPetId(p[0].id);
     });
+    getContact(profile.uid).then((c) => setContactPhone(c?.phone ?? "")).catch(() => {});
   }, [sitterId, profile.uid]);
 
   if (sitter === undefined) return <FullScreenLoader />;
@@ -52,23 +57,36 @@ function BookingForm({ profile }: { profile: UserProfile }) {
   const pet = pets.find((p) => p.id === petId);
   const petMismatch = pet && !accepts(sitter, pet.type);
 
-  async function submit() {
+  const offersHomeCare = !!sitter.services?.includes("House sitting");
+
+  /** Checks the basics, then asks for the declarations. Nothing is sent until those are confirmed. */
+  function review() {
     if (!pet) return setError("Choose which pet needs care.");
-    if (start < todayISO()) return setError("Check-in can't be in the past.");
+    if (start < todayISO()) return setError("Check-in can’t be in the past.");
     if (nights < 1) return setError("Check-out must be at least one night after check-in.");
     if (nights > 60) return setError("Stays can be up to 60 nights.");
     setError("");
-    setSubmitting(true);
-    try {
-      await createBooking({ parent: profile, sitter: sitter!, pet, startDate: start, endDate: end, notes: notes.trim() });
-      toast(`Request sent to ${sitter!.displayName.split(" ")[0]}.`);
-      router.replace("/bookings/");
-    } catch (e) {
+    // Sitters rely on the care sheet, so a booking needs one that says vaccinations are up to date.
+    if (pet.vaccinated !== "up_to_date") return setEditingPet(pet);
+    setDeclOpen(true);
+  }
+
+  async function send(declarations: DeclarationInput) {
+    await createBooking({
+      parent: profile,
+      sitter: sitter!,
+      pet: pet!,
+      startDate: start,
+      endDate: end,
+      notes: notes.trim(),
+      careLocation,
+      declarations,
+    }).catch((e) => {
       console.error(e);
-      setError("We couldn't send this request. If the sitter just changed their rate, reload and try again.");
-    } finally {
-      setSubmitting(false);
-    }
+      throw new Error("We couldn’t send this request. If the sitter just changed their rate, reload and try again.");
+    });
+    toast(`Request sent to ${sitter!.displayName.split(" ")[0]}.`);
+    router.replace("/bookings/");
   }
 
   return (
@@ -115,6 +133,35 @@ function BookingForm({ profile }: { profile: UserProfile }) {
           </p>
         )}
       </section>
+
+      {offersHomeCare && (
+        <section className="pt-7">
+          <h2 className="mb-3 font-display text-lg text-bark">Where will the care happen?</h2>
+          <div className="grid grid-cols-2 gap-2">
+            {(
+              [
+                ["sitter_home", `At ${sitter.displayName.split(" ")[0]}’s home`],
+                ["parent_home", "At my home"],
+              ] as const
+            ).map(([v, label]) => (
+              <button
+                key={v}
+                onClick={() => setCareLocation(v)}
+                aria-pressed={careLocation === v}
+                className={cn(
+                  "rounded-2xl border px-3 py-3 text-sm font-semibold transition",
+                  careLocation === v ? "border-moss bg-moss-tint text-moss" : "border-oat-deep bg-paper text-bark-soft"
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {careLocation === "parent_home" && (
+            <p className="mt-2 text-xs text-bark-soft">You’ll also confirm that your home is pet-proofed before sending the request.</p>
+          )}
+        </section>
+      )}
 
       <section className="pt-7">
         <h2 className="mb-3 flex items-center gap-2 font-display text-lg text-bark">
@@ -175,11 +222,45 @@ function BookingForm({ profile }: { profile: UserProfile }) {
             <p className="font-display text-xl text-bark">{formatINR(total)}</p>
             <p className="text-xs text-stone">{nights > 0 ? `${formatDay(start)} – ${formatDay(end)}` : "Pick dates"}</p>
           </div>
-          <Button onClick={submit} loading={submitting} disabled={!pet || nights < 1}>
-            Send request
+          <Button onClick={review} disabled={!pet || nights < 1}>
+            Review & send
           </Button>
         </div>
       </div>
+
+      {pet && (
+        <DeclarationsSheet
+          open={declOpen}
+          onClose={() => setDeclOpen(false)}
+          pet={pet}
+          atHome={careLocation === "parent_home"}
+          sitterName={sitter.displayName.split(" ")[0]}
+          defaults={{ name: profile.displayName, phone: contactPhone }}
+          onConfirm={send}
+        />
+      )}
+
+      <Sheet open={!!editingPet} onClose={() => setEditingPet(null)} title={`${editingPet?.name ?? "Pet"}’s care sheet`}>
+        {editingPet && (
+          <>
+            <p className="mb-4 rounded-2xl bg-honey-tint px-4 py-3 text-sm text-bark-soft">
+              Sitters need an up-to-date care sheet. To book, {editingPet.name}’s vaccinations must be up to date. If they aren’t, message the sitter first.
+            </p>
+            <PetForm
+              initial={editingPet}
+              submitLabel="Save and continue"
+              onCancel={() => setEditingPet(null)}
+              onSubmit={async (input) => {
+                await updatePet(editingPet.id, input);
+                const updated = { ...editingPet, ...input };
+                setPets((all) => all.map((p) => (p.id === updated.id ? updated : p)));
+                setEditingPet(null);
+                if (updated.vaccinated === "up_to_date") setDeclOpen(true);
+              }}
+            />
+          </>
+        )}
+      </Sheet>
 
       <Sheet open={addingPet} onClose={() => setAddingPet(false)} title="Add a pet">
         <PetForm

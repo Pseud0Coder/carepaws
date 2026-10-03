@@ -27,17 +27,20 @@ import {
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { httpsCallable } from "firebase/functions";
 import { db, storage, functions } from "./firebase";
+import { DECLARATIONS_VERSION, HOME_DECLARATIONS, PARENT_DECLARATIONS } from "./constants";
 import { nightsBetween } from "./format";
 import type {
   Booking,
   BookingStatus,
   CommunityComment,
+  CareLocation,
   CommunityPost,
   Conversation,
   KycCase,
   KycIdType,
   OrgProfile,
   OrgRole,
+  PetCare,
   Message,
   Pet,
   PostCategory,
@@ -308,15 +311,18 @@ export async function getPets(ownerId: string): Promise<Pet[]> {
   return snap.docs.map((d) => fromDoc<Pet>(d));
 }
 
-export type PetInput = Pick<Pet, "name" | "type" | "breed" | "age" | "notes">;
+export type PetInput = Pick<Pet, "name" | "type" | "breed" | "age" | "notes"> & PetCare;
+
+/** Firestore rejects `undefined`, so drop unset optional fields. */
+const defined = <T extends object>(o: T): T => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
 
 export async function addPet(ownerId: string, pet: PetInput): Promise<string> {
-  const r = await addDoc(collection(db(), "pets"), { ...pet, ownerId, createdAt: serverTimestamp() });
+  const r = await addDoc(collection(db(), "pets"), { ...defined(pet), ownerId, createdAt: serverTimestamp() });
   return r.id;
 }
 
 export async function updatePet(petId: string, pet: PetInput) {
-  await updateDoc(doc(db(), "pets", petId), { ...pet });
+  await updateDoc(doc(db(), "pets", petId), { ...defined(pet) });
 }
 
 export async function deletePet(petId: string) {
@@ -325,6 +331,23 @@ export async function deletePet(petId: string) {
 
 // ─── Bookings ──────────────────────────────────────────────────────────────
 
+const CARE_KEYS = [
+  "sex", "neutered", "weightKg", "vaccinated", "vaccinatedOn", "tempers", "medical", "medications", "diet", "vetName", "vetPhone", "microchip",
+] as const;
+
+/** The part of a pet record that is copied into a booking as the care sheet. */
+export function careSheetOf(pet: Pet): PetCare {
+  return Object.fromEntries(CARE_KEYS.filter((k) => pet[k] !== undefined).map((k) => [k, pet[k]])) as PetCare;
+}
+
+export interface DeclarationInput {
+  emergencyLimit: number;
+  emergencyContactName: string;
+  emergencyContactPhone: string;
+  preferredVetName?: string;
+  preferredVetPhone?: string;
+}
+
 export async function createBooking(input: {
   parent: UserProfile;
   sitter: SitterProfile;
@@ -332,8 +355,10 @@ export async function createBooking(input: {
   startDate: string;
   endDate: string;
   notes: string;
+  careLocation: CareLocation;
+  declarations: DeclarationInput;
 }): Promise<string> {
-  const { parent, sitter, pet, startDate, endDate, notes } = input;
+  const { parent, sitter, pet, startDate, endDate, notes, careLocation } = input;
   const nights = nightsBetween(startDate, endDate);
   if (nights < 1) throw new Error("Check-out must be after check-in");
   // The price is recomputed and enforced by Firestore rules from the sitter's
@@ -357,6 +382,17 @@ export async function createBooking(input: {
     status: "pending",
     paymentStatus: "pending",
     notes,
+    careLocation,
+    // The pet's care sheet and the parent's declarations are frozen into the booking as the record of
+    // what was disclosed, and when. The rules refuse a booking unless all of them are affirmed.
+    petCare: careSheetOf(pet),
+    declarations: {
+      version: DECLARATIONS_VERSION,
+      ...Object.fromEntries(PARENT_DECLARATIONS.map((d) => [d.key, true])),
+      ...(careLocation === "parent_home" ? Object.fromEntries(HOME_DECLARATIONS.map((d) => [d.key, true])) : {}),
+      ...defined(input.declarations),
+      acceptedAt: serverTimestamp(),
+    },
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
@@ -376,6 +412,11 @@ export function subscribeBookings(
 export async function getBooking(id: string): Promise<Booking | null> {
   const snap = await getDoc(doc(db(), "bookings", id));
   return snap.exists() ? fromDoc<Booking>(snap) : null;
+}
+
+/** The sitter accepts after reviewing the care sheet and declarations. The rules require the acknowledgement. */
+export async function acceptBooking(id: string) {
+  await updateDoc(doc(db(), "bookings", id), { status: "confirmed", sitterAckAt: serverTimestamp(), updatedAt: serverTimestamp() });
 }
 
 export async function setBookingStatus(id: string, status: BookingStatus) {

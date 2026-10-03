@@ -84,7 +84,27 @@ export interface PrivateContact {
   phone?: string;
 }
 
-export interface Pet {
+export type Vaccination = "up_to_date" | "partial" | "none";
+
+/** What a sitter needs to know to look after a pet safely. Copied into every booking as a record. */
+export interface PetCare {
+  sex?: "male" | "female";
+  neutered?: boolean;
+  weightKg?: number;
+  vaccinated?: Vaccination;
+  /** Date of the last vaccination, YYYY-MM-DD. */
+  vaccinatedOn?: string;
+  /** Behaviour disclosures, e.g. "Has bitten someone". */
+  tempers?: string[];
+  medical?: string;
+  medications?: string;
+  diet?: string;
+  vetName?: string;
+  vetPhone?: string;
+  microchip?: boolean;
+}
+
+export interface Pet extends PetCare {
   id: string;
   ownerId: string;
   name: string;
@@ -93,6 +113,21 @@ export interface Pet {
   age: string;
   notes: string;
   createdAt?: string;
+}
+
+export type CareLocation = "sitter_home" | "parent_home";
+
+/** The pet parent's signed declarations for one booking. Immutable once the booking exists. */
+export interface BookingDeclarations {
+  version: number;
+  /** keys of PARENT_DECLARATIONS / HOME_DECLARATIONS, all true */
+  [key: string]: boolean | number | string | undefined;
+  emergencyLimit: number;
+  emergencyContactName: string;
+  emergencyContactPhone: string;
+  preferredVetName?: string;
+  preferredVetPhone?: string;
+  acceptedAt?: string;
 }
 
 export type BookingStatus = "pending" | "confirmed" | "declined" | "cancelled" | "completed";
@@ -110,6 +145,12 @@ export interface Booking {
   petName: string;
   petType: string;
   petNotes: string;
+  careLocation: CareLocation;
+  /** Snapshot of the pet's care sheet when the booking was made. */
+  petCare: PetCare;
+  declarations: BookingDeclarations;
+  /** When the sitter reviewed the declarations and accepted. */
+  sitterAckAt?: string;
   /** YYYY-MM-DD */
   startDate: string;
   /** YYYY-MM-DD, check-out day */
