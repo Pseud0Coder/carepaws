@@ -146,3 +146,51 @@ export const onBookingCompleted = onDocumentUpdated("bookings/{bookingId}", asyn
     .get();
   await db.collection("users").doc(after.sitterId).set({ completedStays: done.data().count }, { merge: true });
 });
+
+/** Keeps a sitter's public "vouched by N" count in step with their vouches. */
+export const onVouchWritten = onDocumentWritten("vouches/{vouchId}", async (event) => {
+  const sitterIds = new Set<string>();
+  const before = event.data?.before.data();
+  const after = event.data?.after.data();
+  if (before?.sitterId) sitterIds.add(before.sitterId);
+  if (after?.sitterId) sitterIds.add(after.sitterId);
+  // Editing a note doesn't change the count.
+  if (before && after && before.sitterId === after.sitterId) return;
+
+  for (const sitterId of sitterIds) {
+    const n = (await db.collection("vouches").where("sitterId", "==", sitterId).count().get()).data().count;
+    await db.collection("users").doc(sitterId).set({ vouchCount: n }, { merge: true });
+  }
+});
+
+/**
+ * Keeps vouches honest when a rescue or clinic changes:
+ *  - losing verification withdraws everything it has vouched for
+ *  - a new name or photo is copied onto its vouches
+ */
+export const onOrgUpdated = onDocumentUpdated("users/{uid}", async (event) => {
+  const before = event.data?.before.data();
+  const after = event.data?.after.data();
+  if (!before || !after || !["rescue", "vet"].includes(after.role)) return;
+  const orgId = event.params.uid;
+  const vouches = await db.collection("vouches").where("orgId", "==", orgId).get();
+  if (vouches.empty) return;
+
+  if (before.verified === true && after.verified !== true) {
+    for (let i = 0; i < vouches.docs.length; i += 400) {
+      const batch = db.batch();
+      vouches.docs.slice(i, i + 400).forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
+    return;
+  }
+  if (before.displayName !== after.displayName || before.photoURL !== after.photoURL) {
+    for (let i = 0; i < vouches.docs.length; i += 400) {
+      const batch = db.batch();
+      vouches.docs
+        .slice(i, i + 400)
+        .forEach((d) => batch.update(d.ref, { orgName: after.displayName, orgPhoto: after.photoURL ?? null }));
+      await batch.commit();
+    }
+  }
+});

@@ -52,7 +52,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <AuthProvider>
         <NativeBridge />
         <OnboardingGate />
-        <div className={isTabRoute(path) ? "relative z-[1] pb-24" : "relative z-[1]"}>
+        <div className={isTabRoute(path) ? "relative pb-24" : "relative"}>
           <div className="mx-auto min-h-dvh max-w-lg">{children}</div>
         </div>
         <Navbar />

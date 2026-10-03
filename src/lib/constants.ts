@@ -33,3 +33,15 @@ export const PET_EMOJI: Record<string, string> = {
 
 /** Mirrors the platform fee the payout copy refers to. */
 export const PLATFORM_FEE_RATE = 0.1;
+
+export const ROLE_LABEL = {
+  parent: "Pet parent",
+  sitter: "Sitter",
+  rescue: "Rescue / shelter",
+  vet: "Vet clinic",
+} as const;
+
+export const ORG_SERVICES = {
+  rescue: ["Adoption", "Fostering", "Animal rescue & pickup", "Volunteering", "Donations accepted", "Sterilisation drives"],
+  vet: ["Emergency care", "Vaccination", "Surgery", "Diagnostics & lab", "Dental", "Grooming", "Boarding", "Home visits"],
+} as const;

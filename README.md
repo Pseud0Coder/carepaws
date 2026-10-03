@@ -1,6 +1,12 @@
 # CarePaws
 
-A mobile-first pet-sitting app. Pet parents find verified local sitters, request stays, chat and pay. Sitters manage requests, earnings and reviews. A community feed ("the Circle") shares tips and stories.
+A mobile-first pet-care app.
+
+- **Pet parents** find verified local sitters, request stays, chat and pay.
+- **Sitters** manage requests, earnings and reviews, and can be **vouched for** by rescues and vets.
+- **Nearby**: anyone can find rescues, shelters and vet clinics near them and call them in one tap. An **emergency vet** shortcut lists 24×7 clinics first.
+- **Rescues and clinics** have their own account type: a public listing with a phone number, and the ability to vouch for sitters they trust.
+- **The Circle**: a community feed of tips, questions and stories.
 
 It ships as an **Android app** (Capacitor) and as a **website** (Firebase Hosting) from the same code.
 
@@ -25,7 +31,9 @@ There is no Next.js server. Security comes from Firestore rules, which:
 - recompute every booking's price from the sitter's profile,
 - allow only valid status changes (only the sitter accepts, nothing is completed unpaid),
 - keep messages visible to the two participants only,
-- stop users from setting their own `verified` badge or rating.
+- stop users from setting their own `verified` badge or rating,
+- let only **verified** rescues and clinics create a vouch, and only for a sitter, under their own name,
+- keep people's phone numbers private (only rescue/vet listings may publish one).
 
 Only Cloud Functions can mark a booking paid, after verifying the Razorpay signature and re-fetching the payment.
 
@@ -33,7 +41,8 @@ Only Cloud Functions can mark a booking paid, after verifying the Razorpay signa
 
 | Collection | Notes |
 | --- | --- |
-| `users/{uid}` | Public profile. Sitter fields: `services`, `petTypes`, `pricePerNight`… System fields: `verified`, `rating`, `reviewCount`, `topRated`, `completedStays` |
+| `users/{uid}` | Public profile. `role` is `parent`, `sitter`, `rescue` or `vet`. Sitter fields: `services`, `petTypes`, `pricePerNight`… Rescue/vet fields: `phone`, `address`, `lat`/`lng`, `hours`, `open24x7`, `website`. System fields (clients can't write): `verified`, `rating`, `reviewCount`, `topRated`, `completedStays`, `vouchCount` |
+| `vouches/{orgId}_{sitterId}` | A verified rescue/vet vouching for a sitter, with an optional note. One per pair |
 | `users/{uid}/private/contact` | Email and phone, owner-only |
 | `pets/{id}` | Owner-only. Copied into bookings as a snapshot for the sitter |
 | `bookings/{id}` | `pending → confirmed → (paid) → completed`, or `declined` / `cancelled` |
@@ -56,6 +65,24 @@ Only Cloud Functions can mark a booking paid, after verifying the Razorpay signa
    ```bash
    cd functions && GOOGLE_APPLICATION_CREDENTIALS=key.json node seed.mjs --project <project-id>
    ```
+   The seed creates **fictional** sitters, rescues and clinics. Their phone numbers are deliberately invalid placeholders (`+91 00000 000NN`), so a demo can never ring a real person. Remove it before launch.
+
+### Rescues, clinics and vouching
+
+Anyone can sign up as a rescue/shelter or a vet clinic, but **nothing they publish goes live until you verify them**. This is deliberate: the directory carries emergency phone numbers, and a vouch is only worth something if a fake "clinic" can't hand them out.
+
+```bash
+cd functions
+node admin.mjs pending  --project <project-id>          # who is waiting, with phone, address and website
+node admin.mjs verify   <uid> --project <project-id>    # check them (call the number!), then approve
+node admin.mjs unverify <uid> --project <project-id>    # also withdraws every vouch they gave
+```
+
+Use the same `verify` command to give a sitter their "ID verified" badge. Run these with `GOOGLE_APPLICATION_CREDENTIALS=key.json` set.
+
+- **Nearby** lists verified organisations only, sorted by distance when the user shares their location. Location is read on the device and never stored or sent; it is used only to compute distances. Organisations can pin their premises when they set up their listing.
+- **Vouching.** A verified organisation opens a sitter's profile and taps *Vouch*. The sitter's profile then shows *Vouched by N* with each organisation (tap to open its listing), and search can filter to vouched sitters. Counts are kept up to date by the `onVouchWritten` Cloud Function; renaming an organisation updates its vouches, and un-verifying it removes them.
+- **Scale note.** The directory loads every verified listing of a type and sorts on the device, which is fine for thousands. Past that, add geohash range queries.
 
 ### Google Sign-In on Android
 
@@ -104,7 +131,7 @@ Checks:
 
 ```bash
 npm run lint && npm run typecheck
-npm run test:rules             # Firestore security-rule tests on the emulator (needs firebase-tools)
+npm run test:rules             # 40 Firestore security-rule tests on the emulator (needs firebase-tools)
 ```
 
 ## Design

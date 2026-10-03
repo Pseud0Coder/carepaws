@@ -17,6 +17,7 @@ import {
   updateDoc,
   writeBatch,
   collection,
+  deleteDoc,
   getDocs,
   query,
   where,
@@ -40,6 +41,20 @@ const sitter = {
   petTypes: ["Dogs"],
   services: ["Overnight stays"],
 };
+const vet = {
+  uid: "vet1",
+  displayName: "Anand Clinic for Animals",
+  photoURL: null,
+  role: "vet",
+  onboarded: true,
+  verified: true,
+  location: "Andheri, Mumbai",
+  address: "1 Lokhandwala",
+  phone: "+91 00000 00001",
+  services: ["Vaccination"],
+  petTypes: ["Dogs"],
+};
+const rescue = { ...vet, uid: "rescue1", displayName: "Pawsitive Purpose Rescue", role: "rescue" };
 const parent = { uid: "parent1", displayName: "Pat Parent", photoURL: null, role: "parent", onboarded: true };
 
 function booking(over = {}) {
@@ -90,6 +105,9 @@ beforeEach(async () => {
     await setDoc(doc(db, "users/sitter1"), sitter);
     await setDoc(doc(db, "users/parent1"), parent);
     await setDoc(doc(db, "users/parent2"), { ...parent, uid: "parent2" });
+    await setDoc(doc(db, "users/vet1"), vet);
+    await setDoc(doc(db, "users/vet2"), { ...vet, uid: "vet2", displayName: "New Clinic", verified: false });
+    await setDoc(doc(db, "users/rescue1"), rescue);
     await setDoc(doc(db, "pets/pet1"), { ownerId: "parent1", name: "Bruno", type: "Dog", breed: "", age: "", notes: "" });
   });
 });
@@ -299,5 +317,93 @@ describe("the app's list queries are allowed", () => {
     );
     await assertSucceeds(getDocs(query(collection(db, "reviews"), where("authorId", "==", "parent1"))));
     await assertSucceeds(getDocs(query(collection(anon(), "users"), where("role", "==", "sitter"), where("onboarded", "==", true))));
+  });
+});
+
+describe("rescues and vets", () => {
+  const newOrg = { uid: "org9", displayName: "Hope Rescue", photoURL: null, role: "rescue", onboarded: false };
+
+  test("an organisation can publish a phone number; people cannot", async () => {
+    await assertSucceeds(setDoc(doc(as("org9"), "users/org9"), newOrg));
+    await assertSucceeds(
+      updateDoc(doc(as("org9"), "users/org9"), { onboarded: true, location: "Pune", address: "5 Lane", phone: "+91 00000 00099", lat: 18.5, lng: 73.8 })
+    );
+    await assertFails(updateDoc(doc(as("parent1"), "users/parent1"), { phone: "+91 00000 00002" }));
+    await assertFails(updateDoc(doc(as("sitter1"), "users/sitter1"), { address: "My home address" }));
+  });
+  test("a listing can't go live without phone and address, or with junk values", async () => {
+    await assertSucceeds(setDoc(doc(as("org9"), "users/org9"), newOrg));
+    await assertFails(updateDoc(doc(as("org9"), "users/org9"), { onboarded: true, location: "Pune" }));
+    const ok = { onboarded: true, location: "Pune", address: "5 Lane", phone: "+91 00000 00099" };
+    await assertFails(updateDoc(doc(as("org9"), "users/org9"), { ...ok, phone: "call me maybe" }));
+    await assertFails(updateDoc(doc(as("org9"), "users/org9"), { ...ok, website: "javascript:alert(1)" }));
+    await assertFails(updateDoc(doc(as("org9"), "users/org9"), { ...ok, lat: 123 }));
+    await assertSucceeds(updateDoc(doc(as("org9"), "users/org9"), { ...ok, website: "https://hope.example.org" }));
+  });
+  test("an organisation can't verify itself or change its role", async () => {
+    await assertFails(updateDoc(doc(as("vet2"), "users/vet2"), { verified: true }));
+    await assertFails(updateDoc(doc(as("vet1"), "users/vet1"), { role: "rescue" }));
+    await assertFails(updateDoc(doc(as("vet1"), "users/vet1"), { vouchCount: 99 }));
+  });
+  test("a verified vet can edit its own listing", async () => {
+    await assertSucceeds(updateDoc(doc(as("vet1"), "users/vet1"), { hours: "Open 24×7", open24x7: true }));
+  });
+  test("organisations can't book stays", async () => {
+    await seed((db) => setDoc(doc(db, "pets/vetpet"), { ownerId: "vet1", name: "X", type: "Dog" }));
+    await assertFails(setDoc(doc(as("vet1"), "bookings/b9"), booking({ parentId: "vet1", petId: "vetpet" })));
+  });
+  test("lists of verified listings and vouches are public", async () => {
+    await assertSucceeds(getDocs(query(collection(anon(), "users"), where("role", "==", "vet"), where("verified", "==", true))));
+    await assertSucceeds(getDocs(query(collection(anon(), "vouches"), where("sitterId", "==", "sitter1"))));
+    await assertSucceeds(getDocs(query(collection(anon(), "vouches"), where("orgId", "==", "vet1"))));
+  });
+});
+
+describe("vouches", () => {
+  const vouch = (over = {}) => ({
+    orgId: "vet1",
+    orgName: "Anand Clinic for Animals",
+    orgPhoto: null,
+    orgType: "vet",
+    sitterId: "sitter1",
+    note: "Reliable with post-surgery care.",
+    createdAt: serverTimestamp(),
+    ...over,
+  });
+
+  test("a verified vet or rescue can vouch for a sitter", async () => {
+    await assertSucceeds(setDoc(doc(as("vet1"), "vouches/vet1_sitter1"), vouch()));
+    await assertSucceeds(
+      setDoc(doc(as("rescue1"), "vouches/rescue1_sitter1"), vouch({ orgId: "rescue1", orgName: "Pawsitive Purpose Rescue", orgType: "rescue" }))
+    );
+    await assertSucceeds(getDoc(doc(anon(), "vouches/vet1_sitter1")));
+  });
+  test("an unverified organisation can't vouch", async () => {
+    await assertFails(setDoc(doc(as("vet2"), "vouches/vet2_sitter1"), vouch({ orgId: "vet2", orgName: "New Clinic" })));
+  });
+  test("people can't vouch, including sitters for themselves", async () => {
+    await assertFails(setDoc(doc(as("parent1"), "vouches/parent1_sitter1"), vouch({ orgId: "parent1", orgName: "Pat Parent" })));
+    await assertFails(setDoc(doc(as("sitter1"), "vouches/sitter1_sitter1"), vouch({ orgId: "sitter1", orgName: "Sam Sitter", orgType: "vet" })));
+  });
+  test("can't forge another organisation, a name, or a type", async () => {
+    await assertFails(setDoc(doc(as("vet2"), "vouches/vet1_sitter1"), vouch()));
+    await assertFails(setDoc(doc(as("vet1"), "vouches/vet1_sitter1"), vouch({ orgName: "Famous Hospital" })));
+    await assertFails(setDoc(doc(as("vet1"), "vouches/vet1_sitter1"), vouch({ orgType: "rescue" })));
+    await assertFails(setDoc(doc(as("vet1"), "vouches/anything"), vouch()));
+  });
+  test("only sitters can be vouched for; notes are capped", async () => {
+    await assertFails(setDoc(doc(as("vet1"), "vouches/vet1_parent1"), vouch({ sitterId: "parent1" })));
+    await assertFails(setDoc(doc(as("vet1"), "vouches/vet1_sitter1"), vouch({ note: "x".repeat(301) })));
+    await assertSucceeds(setDoc(doc(as("vet1"), "vouches/vet1_sitter1"), Object.fromEntries(Object.entries(vouch()).filter(([k]) => k !== "note"))));
+  });
+  test("only the organisation can edit its note or withdraw", async () => {
+    await seed((db) => setDoc(doc(db, "vouches/vet1_sitter1"), { ...vouch(), createdAt: new Date() }));
+    await assertSucceeds(updateDoc(doc(as("vet1"), "vouches/vet1_sitter1"), { note: "Updated" }));
+    await assertFails(updateDoc(doc(as("vet1"), "vouches/vet1_sitter1"), { sitterId: "parent1" }));
+    await assertFails(updateDoc(doc(as("vet1"), "vouches/vet1_sitter1"), { orgName: "Hacked" }));
+    await assertFails(updateDoc(doc(as("sitter1"), "vouches/vet1_sitter1"), { note: "Glowing" }));
+    await assertFails(deleteDoc(doc(as("sitter1"), "vouches/vet1_sitter1")));
+    await assertFails(deleteDoc(doc(as("vet2"), "vouches/vet1_sitter1")));
+    await assertSucceeds(deleteDoc(doc(as("vet1"), "vouches/vet1_sitter1")));
   });
 });

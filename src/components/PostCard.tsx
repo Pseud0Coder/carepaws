@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Heart, MessageSquare } from "lucide-react";
 import type { CommunityPost, PostCategory } from "@/lib/types";
 import { timeAgo } from "@/lib/format";
+import { ROLE_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/cn";
 import Avatar from "./Avatar";
 import { Tag } from "./ui";
@@ -34,7 +35,7 @@ export default function PostCard({
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-bark">{post.author}</p>
           <p className="text-xs text-stone">
-            {post.authorRole === "sitter" ? "Sitter" : "Pet parent"} · {timeAgo(post.createdAt)}
+            {ROLE_LABEL[post.authorRole] ?? "Member"} · {timeAgo(post.createdAt)}
           </p>
         </div>
         <Tag tone={meta.tone}>{meta.label}</Tag>

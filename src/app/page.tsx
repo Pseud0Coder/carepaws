@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ArrowRight, CalendarHeart, PawPrint, Search, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowRight, CalendarHeart, HeartHandshake, PawPrint, Search, ShieldCheck, Siren, Sparkles, Stethoscope } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { getPosts, getSitters, subscribeBookings } from "@/lib/db";
-import type { Booking, CommunityPost, SitterProfile } from "@/lib/types";
+import { isOrgRole, type Booking, type CommunityPost, type SitterProfile } from "@/lib/types";
 import { PET_EMOJI, PET_TYPES } from "@/lib/constants";
 import { firstName, formatRange, greeting, todayISO } from "@/lib/format";
 import Avatar from "@/components/Avatar";
@@ -24,7 +24,8 @@ export default function Discover() {
   }, []);
 
   useEffect(() => {
-    if (!profile?.role) return;
+    // Rescues and clinics have no bookings.
+    if (!profile?.role || isOrgRole(profile.role)) return;
     const field = profile.role === "sitter" ? "sitterId" : "parentId";
     return subscribeBookings(profile.uid, field, (all) => {
       const today = todayISO();
@@ -105,6 +106,34 @@ export default function Discover() {
         )}
       </section>
 
+      <section className="space-y-3 px-5 pt-5">
+        <Link
+          href="/nearby/?type=vet&emergency=1"
+          className="flex items-center gap-4 rounded-[var(--radius-card)] bg-ember-tint p-4 transition active:scale-[0.99]"
+        >
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-ember text-on-moss">
+            <Siren className="h-6 w-6" />
+          </span>
+          <span className="flex-1">
+            <span className="block font-semibold text-bark">Pet emergency?</span>
+            <span className="block text-sm text-bark-soft">Find a vet open now and call in one tap.</span>
+          </span>
+          <ArrowRight className="h-5 w-5 text-ember" />
+        </Link>
+        <div className="grid grid-cols-2 gap-3">
+          <Link href="/nearby/?type=rescue" className="rounded-[var(--radius-card)] bg-paper p-4 shadow-soft transition active:scale-[0.98]">
+            <HeartHandshake className="h-6 w-6 text-clay" />
+            <span className="mt-3 block font-semibold text-bark">Rescues & shelters</span>
+            <span className="block text-xs text-bark-soft">Adopt, foster, get help</span>
+          </Link>
+          <Link href="/nearby/?type=vet" className="rounded-[var(--radius-card)] bg-paper p-4 shadow-soft transition active:scale-[0.98]">
+            <Stethoscope className="h-6 w-6 text-river" />
+            <span className="mt-3 block font-semibold text-bark">Vets & clinics</span>
+            <span className="block text-xs text-bark-soft">Near you, with phone numbers</span>
+          </Link>
+        </div>
+      </section>
+
       <section className="pt-7">
         <div className="px-5">
           <SectionTitle>Who needs care?</SectionTitle>
@@ -176,7 +205,7 @@ export default function Discover() {
         </section>
       )}
 
-      {profile?.role !== "sitter" && (
+      {profile?.role !== "sitter" && !isOrgRole(profile?.role) && (
         <section className="px-5 pt-7 pb-4">
           <div className="flex items-center gap-4 rounded-[var(--radius-card)] bg-clay-tint p-5">
             <PawPrint className="h-8 w-8 shrink-0 text-clay" />

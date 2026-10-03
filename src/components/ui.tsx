@@ -16,6 +16,8 @@ import {
 } from "react";
 import { ArrowLeft, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { useAuth } from "@/lib/auth-context";
+import Avatar from "./Avatar";
 
 // ─── Buttons ───────────────────────────────────────────────────────────────
 
@@ -274,16 +276,34 @@ export function Sheet({
 
 // ─── App bar ───────────────────────────────────────────────────────────────
 
+/** Top-level screens link to the profile from here, since the tab bar has no "You" tab. */
+function ProfileLink() {
+  const { profile, loading } = useAuth();
+  if (loading) return <span className="h-10 w-10" />;
+  return profile ? (
+    <Link href="/dashboard/" aria-label="Your profile" className="mr-1 inline-flex h-10 w-10 items-center justify-center">
+      <Avatar src={profile.photoURL} name={profile.displayName} size="sm" />
+    </Link>
+  ) : (
+    <Link href="/auth/" className="mr-2 inline-flex h-9 items-center rounded-full bg-moss px-4 text-sm font-semibold text-on-moss">
+      Sign in
+    </Link>
+  );
+}
+
 export function AppBar({
   title,
   back,
   action,
   transparent,
+  noProfile,
 }: {
   title?: ReactNode;
   back?: boolean | string;
   action?: ReactNode;
   transparent?: boolean;
+  /** Hide the profile shortcut (used on the profile screen itself). */
+  noProfile?: boolean;
 }) {
   const router = useRouter();
   return (
@@ -306,6 +326,7 @@ export function AppBar({
           ))}
         <div className={cn("min-w-0 flex-1 truncate font-display text-lg text-bark", back ? "px-1" : "px-3")}>{title}</div>
         {action}
+        {!back && !noProfile && <ProfileLink />}
       </div>
     </header>
   );

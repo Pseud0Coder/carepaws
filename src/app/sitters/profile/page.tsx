@@ -3,15 +3,16 @@
 import Link from "next/link";
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { BadgeCheck, Clock, MapPin, MessageCircle, Reply, ThumbsUp, UserX } from "lucide-react";
+import { BadgeCheck, Clock, MapPin, MessageCircle, Reply, ShieldCheck, ThumbsUp, UserX } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { getReviews, getSitter, openConversation, respondToReview, toggleReviewHelpful } from "@/lib/db";
-import type { Review, SitterProfile } from "@/lib/types";
+import { getReviews, getSitter, getVouchesForSitter, openConversation, respondToReview, toggleReviewHelpful } from "@/lib/db";
+import type { Review, SitterProfile, Vouch } from "@/lib/types";
 import { PET_EMOJI, WEEKDAYS } from "@/lib/constants";
 import { formatINR, timeAgo } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import Avatar from "@/components/Avatar";
 import StarRating from "@/components/StarRating";
+import VouchSection from "@/components/VouchSection";
 import { AppBar, Button, EmptyState, FullScreenLoader, Tag, TextArea, useToast } from "@/components/ui";
 
 function Stat({ value, label }: { value: string; label: string }) {
@@ -99,12 +100,14 @@ function SitterProfileScreen() {
   const toast = useToast();
   const [sitter, setSitter] = useState<SitterProfile | null | undefined>(undefined);
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [vouches, setVouches] = useState<Vouch[]>([]);
   const [opening, setOpening] = useState(false);
 
   useEffect(() => {
     if (!id) return;
     getSitter(id).then(setSitter).catch(() => setSitter(null));
     getReviews(id).then(setReviews).catch(() => {});
+    getVouchesForSitter(id).then(setVouches).catch(() => {});
   }, [id]);
 
   if (id && sitter === undefined) return <FullScreenLoader />;
@@ -149,14 +152,21 @@ function SitterProfileScreen() {
           <div className="mt-3 flex flex-wrap justify-center gap-1.5">
             {sitter.topRated && <Tag tone="moss">Top rated</Tag>}
             {sitter.verified ? <Tag tone="river">ID verified</Tag> : <Tag>Not yet verified</Tag>}
+            {vouches.length > 0 && (
+              <Tag tone="clay">
+                <ShieldCheck className="h-3 w-3" /> Vouched by {vouches.length}
+              </Tag>
+            )}
           </div>
         </section>
 
         <section className="mx-5 mt-6 flex divide-x divide-oat-deep rounded-[var(--radius-card)] bg-paper py-4 shadow-soft">
-          <Stat value={(sitter.reviewCount ?? 0) > 0 ? (sitter.rating ?? 0).toFixed(1) : "—"} label={`${sitter.reviewCount ?? 0} reviews`} />
+          <Stat value={(sitter.reviewCount ?? 0) > 0 ? (sitter.rating ?? 0).toFixed(1) : "—"} label={(sitter.reviewCount ?? 0) === 1 ? "1 review" : `${sitter.reviewCount ?? 0} reviews`} />
           <Stat value={sitter.experience || "—"} label="experience" />
           <Stat value={String(sitter.completedStays ?? 0)} label="stays done" />
         </section>
+
+        <VouchSection sitter={sitter} vouches={vouches} onChange={setVouches} />
 
         {sitter.bio && (
           <section className="px-5 pt-7">

@@ -7,6 +7,7 @@ import {
   Camera,
   ChevronRight,
   Eye,
+  ShieldCheck,
   LogOut,
   Moon,
   PawPrint,
@@ -19,14 +20,16 @@ import {
   Wallet,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { addPet, deletePet, getContact, getPets, subscribeBookings, updateContact, updatePet, uploadAvatar } from "@/lib/db";
-import type { Booking, Pet, UserProfile } from "@/lib/types";
-import { PET_EMOJI, PLATFORM_FEE_RATE } from "@/lib/constants";
+import { addPet, deletePet, getContact, getPets, getSitter, getVouchesByOrg, subscribeBookings, updateContact, updatePet, uploadAvatar, withdrawVouch } from "@/lib/db";
+import { isOrgRole, type Booking, type Pet, type SitterProfile, type UserProfile, type Vouch } from "@/lib/types";
+import { PET_EMOJI, PLATFORM_FEE_RATE, ROLE_LABEL } from "@/lib/constants";
 import { formatINR } from "@/lib/format";
 import { getThemePref, setThemePref, type ThemePref } from "@/lib/theme";
 import { cn } from "@/lib/cn";
 import Avatar from "@/components/Avatar";
 import Footer from "@/components/Footer";
+import { orgHref } from "@/components/OrgCard";
+import OrgSettingsForm from "@/components/OrgSettingsForm";
 import PetForm from "@/components/PetForm";
 import RequireAuth from "@/components/RequireAuth";
 import { sitterHref } from "@/components/SitterCard";
@@ -181,6 +184,85 @@ function Earnings({ uid }: { uid: string }) {
   );
 }
 
+function OrgPanel({ profile }: { profile: UserProfile }) {
+  const toast = useToast();
+  const [vouches, setVouches] = useState<Vouch[] | null>(null);
+  const [sitters, setSitters] = useState<Record<string, SitterProfile>>({});
+  useEffect(() => {
+    getVouchesByOrg(profile.uid)
+      .then(async (v) => {
+        setVouches(v);
+        const found = await Promise.all(v.map((x) => getSitter(x.sitterId).catch(() => null)));
+        setSitters(Object.fromEntries(found.filter((s): s is SitterProfile => !!s).map((s) => [s.uid, s])));
+      })
+      .catch(() => setVouches([]));
+  }, [profile.uid]);
+
+  async function withdraw(v: Vouch) {
+    if (!confirm("Withdraw this vouch?")) return;
+    try {
+      await withdrawVouch(profile.uid, v.sitterId);
+      setVouches((all) => all?.filter((x) => x.id !== v.id) ?? null);
+      toast("Vouch withdrawn.");
+    } catch {
+      toast("Couldn’t withdraw. Try again.", "error");
+    }
+  }
+
+  const verified = profile.verified === true;
+  return (
+    <>
+      <section className="px-5 pt-6">
+        {verified ? (
+          <div className="flex gap-3 rounded-[var(--radius-card)] bg-moss-tint p-4">
+            <ShieldCheck className="h-6 w-6 shrink-0 text-moss" />
+            <p className="text-sm text-bark">
+              <span className="font-semibold">Verified.</span> Your listing is live in Nearby, and you can vouch for sitters you trust.
+            </p>
+          </div>
+        ) : (
+          <div className="flex gap-3 rounded-[var(--radius-card)] bg-honey-tint p-4">
+            <ShieldCheck className="h-6 w-6 shrink-0 text-honey" />
+            <p className="text-sm text-bark">
+              <span className="font-semibold">Pending verification.</span> Your listing is hidden until CarePaws has checked it. You can vouch for sitters once it’s verified.
+            </p>
+          </div>
+        )}
+      </section>
+
+      <section className="px-5 pt-7">
+        <SectionTitle>Sitters you vouch for</SectionTitle>
+        {vouches?.length === 0 && (
+          <div className="rounded-[var(--radius-card)] border border-dashed border-oat-deep p-6 text-center">
+            <p className="text-sm text-bark-soft">
+              Open a sitter’s profile and tap “Vouch” to tell people you trust them with animals.
+            </p>
+            <Link href="/sitters/" className="mt-3 inline-block text-sm font-semibold text-moss">
+              Browse sitters
+            </Link>
+          </div>
+        )}
+        {!!vouches?.length && (
+          <ul className="divide-y divide-oat-deep/60 overflow-hidden rounded-[var(--radius-card)] bg-paper shadow-soft">
+            {vouches.map((v) => (
+              <li key={v.id} className="flex items-center gap-3 px-4 py-3">
+                <Avatar src={sitters[v.sitterId]?.photoURL} name={sitters[v.sitterId]?.displayName ?? "Sitter"} size="sm" />
+                <Link href={sitterHref(v.sitterId)} className="min-w-0 flex-1 font-semibold text-bark">
+                  <span className="block truncate">{sitters[v.sitterId]?.displayName ?? "View sitter"}</span>
+                  {v.note && <span className="mt-0.5 block text-sm font-normal text-bark-soft italic">“{v.note}”</span>}
+                </Link>
+                <button onClick={() => withdraw(v)} className="text-sm font-semibold text-ember">
+                  Withdraw
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </>
+  );
+}
+
 function EditDetails({ profile, onDone }: { profile: UserProfile; onDone: () => void }) {
   const { saveProfile } = useAuth();
   const toast = useToast();
@@ -191,9 +273,10 @@ function EditDetails({ profile, onDone }: { profile: UserProfile; onDone: () => 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  const org = isOrgRole(profile.role);
   useEffect(() => {
-    getContact(profile.uid).then((c) => setPhone(c?.phone ?? ""));
-  }, [profile.uid]);
+    if (!org) getContact(profile.uid).then((c) => setPhone(c?.phone ?? ""));
+  }, [profile.uid, org]);
 
   async function save(e: FormEvent) {
     e.preventDefault();
@@ -201,7 +284,7 @@ function EditDetails({ profile, onDone }: { profile: UserProfile; onDone: () => 
     setError("");
     try {
       await saveProfile({ displayName: displayName.trim(), location: location.trim(), bio: bio.trim() });
-      await updateContact(profile.uid, { phone: phone.trim() });
+      if (!org) await updateContact(profile.uid, { phone: phone.trim() });
       toast("Profile saved.");
       onDone();
     } catch (e) {
@@ -219,9 +302,11 @@ function EditDetails({ profile, onDone }: { profile: UserProfile; onDone: () => 
       <Field label="Neighbourhood, city">
         <Input value={location} onChange={(e) => setLocation(e.target.value)} maxLength={80} />
       </Field>
-      <Field label="Phone (private)">
-        <Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} maxLength={20} />
-      </Field>
+      {!org && (
+        <Field label="Phone (private)">
+          <Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} maxLength={20} />
+        </Field>
+      )}
       <Field label="Bio">
         <TextArea value={bio} onChange={(e) => setBio(e.target.value)} maxLength={600} />
       </Field>
@@ -270,9 +355,10 @@ function You({ profile }: { profile: UserProfile }) {
   const router = useRouter();
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [sheet, setSheet] = useState<"details" | "sitter" | null>(null);
+  const [sheet, setSheet] = useState<"details" | "sitter" | "listing" | null>(null);
   const [uploading, setUploading] = useState(false);
   const isSitter = profile.role === "sitter";
+  const org = isOrgRole(profile.role) ? profile.role : null;
 
   async function onPhoto(file?: File) {
     if (!file) return;
@@ -302,12 +388,12 @@ function You({ profile }: { profile: UserProfile }) {
         <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => onPhoto(e.target.files?.[0])} />
         <h1 className="mt-4 font-display text-[26px] text-bark">{profile.displayName}</h1>
         <p className="text-sm text-bark-soft">
-          {isSitter ? "Sitter" : "Pet parent"}
+          {ROLE_LABEL[profile.role ?? "parent"]}
           {profile.location && ` · ${profile.location}`}
         </p>
       </section>
 
-      {isSitter ? <Earnings uid={profile.uid} /> : <Pets uid={profile.uid} />}
+      {org ? <OrgPanel profile={profile} /> : isSitter ? <Earnings uid={profile.uid} /> : <Pets uid={profile.uid} />}
 
       <section className="px-5 pt-7">
         <SectionTitle>Account</SectionTitle>
@@ -316,7 +402,18 @@ function You({ profile }: { profile: UserProfile }) {
           {isSitter && (
             <>
               <Row icon={<Settings2 className="h-5 w-5" />} label="Services & rates" detail={formatINR(profile.pricePerNight ?? 0)} onClick={() => setSheet("sitter")} />
-              <Row icon={<Eye className="h-5 w-5" />} label="View public profile" href={sitterHref(profile.uid)} />
+              <Row
+                icon={<Eye className="h-5 w-5" />}
+                label="View public profile"
+                detail={profile.vouchCount ? `Vouched by ${profile.vouchCount}` : undefined}
+                href={sitterHref(profile.uid)}
+              />
+            </>
+          )}
+          {org && (
+            <>
+              <Row icon={<Settings2 className="h-5 w-5" />} label="Listing details" detail={profile.phone} onClick={() => setSheet("listing")} />
+              <Row icon={<Eye className="h-5 w-5" />} label="View public listing" href={orgHref(profile.uid)} />
             </>
           )}
         </div>
@@ -346,6 +443,20 @@ function You({ profile }: { profile: UserProfile }) {
       <Sheet open={sheet === "details"} onClose={() => setSheet(null)} title="Personal details">
         <EditDetails profile={profile} onDone={() => setSheet(null)} />
       </Sheet>
+      <Sheet open={sheet === "listing"} onClose={() => setSheet(null)} title="Listing details">
+        {org && (
+          <OrgSettingsForm
+            role={org}
+            initial={profile}
+            submitLabel="Save listing"
+            onSubmit={async (s) => {
+              await saveProfile(s);
+              toast("Listing updated.");
+              setSheet(null);
+            }}
+          />
+        )}
+      </Sheet>
       <Sheet open={sheet === "sitter"} onClose={() => setSheet(null)} title="Services & rates">
         <SitterSettingsForm
           initial={profile}
@@ -364,7 +475,7 @@ function You({ profile }: { profile: UserProfile }) {
 export default function YouPage() {
   return (
     <>
-      <AppBar title="You" />
+      <AppBar title="You" noProfile />
       <RequireAuth message="Sign in to manage your pets and profile.">{(p) => <You profile={p} />}</RequireAuth>
     </>
   );

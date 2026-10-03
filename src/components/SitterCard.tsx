@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BadgeCheck, MapPin, Star } from "lucide-react";
+import { BadgeCheck, MapPin, ShieldCheck, Star } from "lucide-react";
 import type { SitterProfile } from "@/lib/types";
 import { formatINR } from "@/lib/format";
 import Avatar from "./Avatar";
@@ -36,6 +36,11 @@ export default function SitterCard({ sitter }: { sitter: SitterProfile }) {
             <Tag tone="river">New</Tag>
           )}
           {sitter.topRated && <Tag tone="moss">Top rated</Tag>}
+          {(sitter.vouchCount ?? 0) > 0 && (
+            <Tag tone="clay">
+              <ShieldCheck className="h-3 w-3" /> Vouched by {sitter.vouchCount}
+            </Tag>
+          )}
           {sitter.petTypes?.slice(0, 2).map((p) => (
             <Tag key={p}>{p}</Tag>
           ))}
@@ -66,6 +71,12 @@ export function SitterTile({ sitter }: { sitter: SitterProfile }) {
         <Star className="h-3 w-3 fill-current" />
         {(sitter.rating ?? 0) > 0 ? sitter.rating!.toFixed(1) : "New"}
         <span className="text-stone">· {formatINR(sitter.pricePerNight)}</span>
+        {(sitter.vouchCount ?? 0) > 0 && (
+          <span className="ml-0.5 inline-flex items-center gap-0.5 text-clay" title={`Vouched by ${sitter.vouchCount}`}>
+            <ShieldCheck className="h-3 w-3" />
+            {sitter.vouchCount}
+          </span>
+        )}
       </div>
     </Link>
   );

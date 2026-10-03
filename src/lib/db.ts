@@ -34,6 +34,8 @@ import type {
   CommunityComment,
   CommunityPost,
   Conversation,
+  OrgProfile,
+  OrgRole,
   Message,
   Pet,
   PostCategory,
@@ -41,6 +43,7 @@ import type {
   Review,
   SitterProfile,
   UserProfile,
+  Vouch,
 } from "./types";
 
 function normalize(data: DocumentData): DocumentData {
@@ -102,6 +105,13 @@ export type EditableProfile = Pick<
   | "experience"
   | "availability"
   | "responseTime"
+  | "phone"
+  | "address"
+  | "lat"
+  | "lng"
+  | "hours"
+  | "open24x7"
+  | "website"
 >;
 
 export async function updateProfile(uid: string, data: Partial<EditableProfile>) {
@@ -123,7 +133,7 @@ export interface SitterFilters {
   search?: string;
   petType?: string;
   maxPrice?: number;
-  sortBy?: "rating" | "price-low" | "price-high" | "reviews";
+  sortBy?: "rating" | "price-low" | "price-high" | "reviews" | "vouched";
 }
 
 export async function getSitters(filters: SitterFilters = {}): Promise<SitterProfile[]> {
@@ -161,6 +171,53 @@ export async function getSitters(filters: SitterFilters = {}): Promise<SitterPro
 export async function getSitter(uid: string): Promise<SitterProfile | null> {
   const p = await getProfile(uid);
   return p && p.role === "sitter" ? (p as SitterProfile) : null;
+}
+
+// ─── Rescues & vets ────────────────────────────────────────────────────────
+
+/** Verified, live listings of one kind. Unverified organisations stay hidden. */
+export async function getOrgs(type: OrgRole): Promise<OrgProfile[]> {
+  const q = query(collection(db(), "users"), where("role", "==", type), where("verified", "==", true));
+  const snap = await getDocs(q);
+  return snap.docs
+    .map((d) => ({ ...normalize(d.data()), uid: d.id }) as OrgProfile)
+    .filter((o) => o.onboarded);
+}
+
+export async function getOrg(uid: string): Promise<OrgProfile | null> {
+  const p = await getProfile(uid);
+  return p && (p.role === "rescue" || p.role === "vet") ? (p as OrgProfile) : null;
+}
+
+// ─── Vouches ───────────────────────────────────────────────────────────────
+
+export const vouchId = (orgId: string, sitterId: string) => `${orgId}_${sitterId}`;
+
+export async function getVouchesForSitter(sitterId: string): Promise<Vouch[]> {
+  const snap = await getDocs(query(collection(db(), "vouches"), where("sitterId", "==", sitterId)));
+  return snap.docs.map((d) => fromDoc<Vouch>(d)).sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
+}
+
+export async function getVouchesByOrg(orgId: string): Promise<Vouch[]> {
+  const snap = await getDocs(query(collection(db(), "vouches"), where("orgId", "==", orgId)));
+  return snap.docs.map((d) => fromDoc<Vouch>(d)).sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+}
+
+export async function vouchForSitter(org: UserProfile, sitterId: string, note: string) {
+  const n = note.trim();
+  await setDoc(doc(db(), "vouches", vouchId(org.uid, sitterId)), {
+    orgId: org.uid,
+    orgName: org.displayName,
+    orgPhoto: org.photoURL ?? null,
+    orgType: org.role,
+    sitterId,
+    ...(n ? { note: n } : {}),
+    createdAt: serverTimestamp(),
+  });
+}
+
+export async function withdrawVouch(orgId: string, sitterId: string) {
+  await deleteDoc(doc(db(), "vouches", vouchId(orgId, sitterId)));
 }
 
 // ─── Pets ──────────────────────────────────────────────────────────────────

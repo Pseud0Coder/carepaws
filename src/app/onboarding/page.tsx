@@ -1,15 +1,16 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Check, HeartHandshake, Home, PawPrint } from "lucide-react";
+import { Check, HeartHandshake, Home, PawPrint, Stethoscope, Warehouse } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { addPet, getPets, updateContact } from "@/lib/db";
-import type { Pet, Role } from "@/lib/types";
+import { isOrgRole, type Pet, type Role } from "@/lib/types";
 import { PET_EMOJI } from "@/lib/constants";
 import { cn } from "@/lib/cn";
 import RequireAuth from "@/components/RequireAuth";
 import PetForm from "@/components/PetForm";
+import OrgSettingsForm from "@/components/OrgSettingsForm";
 import SitterSettingsForm from "@/components/SitterSettingsForm";
 import { Button, ErrorNote, Field, Input, TextArea, useToast } from "@/components/ui";
 
@@ -45,8 +46,11 @@ function Onboarding() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  const finishing = useRef(false);
+
   useEffect(() => {
-    if (profile?.onboarded) router.replace("/");
+    // Already onboarded when the page opened (not mid-finish, which navigates itself).
+    if (profile?.onboarded && !finishing.current) router.replace("/");
   }, [profile?.onboarded, router]);
 
   useEffect(() => {
@@ -77,7 +81,8 @@ function Onboarding() {
     setError("");
     try {
       await saveProfile({ displayName: displayName.trim(), location: location.trim(), bio: bio.trim() });
-      if (phone.trim()) await updateContact(user.uid, { phone: phone.trim() });
+      // People keep their phone private; organisations publish theirs on the listing form.
+      if (!isOrgRole(role) && phone.trim()) await updateContact(user.uid, { phone: phone.trim() });
       setStep("details");
     } catch (e) {
       setError((e as Error).message);
@@ -88,10 +93,14 @@ function Onboarding() {
 
   async function finish() {
     setBusy(true);
+    finishing.current = true;
     try {
       await saveProfile({ onboarded: true });
       toast("You're all set.");
       router.replace(role === "sitter" ? "/dashboard/" : "/");
+    } catch (e) {
+      finishing.current = false;
+      throw e;
     } finally {
       setBusy(false);
     }
@@ -106,12 +115,14 @@ function Onboarding() {
       {step === "role" && (
         <section className="animate-rise">
           <h1 className="font-display text-[30px] leading-tight text-bark">How will you use CarePaws?</h1>
-          <p className="mt-2 text-bark-soft">You can’t switch later without a new account, so choose what fits best.</p>
+          <p className="mt-2 text-bark-soft">Pick the one that fits best. It can’t be changed later without a new account.</p>
           <div className="mt-8 space-y-3">
             {(
               [
                 ["parent", Home, "I have a pet", "Find and book trusted sitters nearby."],
-                ["sitter", HeartHandshake, "I'm a sitter", "Care for pets and earn on your own schedule."],
+                ["sitter", HeartHandshake, "I’m a sitter", "Care for pets and earn on your own schedule."],
+                ["rescue", Warehouse, "I run a rescue or shelter", "List it so people nearby can call you, and vouch for sitters you trust."],
+                ["vet", Stethoscope, "I’m a vet or clinic", "Be found in emergencies, and vouch for sitters you trust."],
               ] as const
             ).map(([r, Icon, title, body]) => (
               <button
@@ -123,7 +134,12 @@ function Onboarding() {
                   role === r ? "border-moss" : "border-oat-deep/60"
                 )}
               >
-                <span className={cn("flex h-12 w-12 items-center justify-center rounded-2xl", r === "parent" ? "bg-clay-tint text-clay" : "bg-moss-tint text-moss")}>
+                <span
+                  className={cn(
+                    "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl",
+                    r === "parent" || r === "rescue" ? "bg-clay-tint text-clay" : r === "vet" ? "bg-river-tint text-river" : "bg-moss-tint text-moss"
+                  )}
+                >
                   <Icon className="h-6 w-6" />
                 </span>
                 <span>
@@ -141,25 +157,37 @@ function Onboarding() {
 
       {step === "about" && (
         <form onSubmit={saveAbout} className="animate-rise space-y-4">
-          <h1 className="font-display text-[30px] leading-tight text-bark">A little about you</h1>
+          <h1 className="font-display text-[30px] leading-tight text-bark">{isOrgRole(role) ? "About your organisation" : "A little about you"}</h1>
           <p className="!mt-2 text-bark-soft">
-            {role === "sitter" ? "Pet parents read this before they book." : "Sitters see this when you request a stay."}
+            {isOrgRole(role)
+              ? "This is what people see when they find you."
+              : role === "sitter"
+                ? "Pet parents read this before they book."
+                : "Sitters see this when you request a stay."}
           </p>
-          <Field label="Name">
+          <Field label={isOrgRole(role) ? "Organisation name" : "Name"}>
             <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} required minLength={2} maxLength={60} />
           </Field>
           <Field label="Neighbourhood, city">
             <Input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Indiranagar, Bengaluru" required maxLength={80} />
           </Field>
-          <Field label="Phone (private)" hint="Only you can see this. We never show it on your profile.">
-            <Input type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="tel" maxLength={20} />
-          </Field>
-          <Field label="Bio">
+          {!isOrgRole(role) && (
+            <Field label="Phone (private)" hint="Only you can see this. We never show it on your profile.">
+              <Input type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="tel" maxLength={20} />
+            </Field>
+          )}
+          <Field label={isOrgRole(role) ? "About" : "Bio"}>
             <TextArea
               value={bio}
               onChange={(e) => setBio(e.target.value)}
               maxLength={600}
-              placeholder={role === "sitter" ? "Your home, your routine, the pets you've cared for…" : "Tell sitters about your household."}
+              placeholder={
+                isOrgRole(role)
+                  ? "Who you are, who you help, and how people can get involved."
+                  : role === "sitter"
+                    ? "Your home, your routine, the pets you’ve cared for…"
+                    : "Tell sitters about your household."
+              }
             />
           </Field>
           <ErrorNote>{error}</ErrorNote>
@@ -174,6 +202,29 @@ function Onboarding() {
         </form>
       )}
 
+      {step === "details" && isOrgRole(role) && (
+        <section className="animate-rise">
+          <h1 className="font-display text-[30px] leading-tight text-bark">Your listing</h1>
+          <p className="mt-2 mb-6 text-bark-soft">
+            People will tap your number to call. CarePaws verifies every listing before it appears, usually within a couple of days.
+          </p>
+          <OrgSettingsForm
+            role={role}
+            initial={profile ?? {}}
+            submitLabel="Submit listing"
+            onSubmit={async (s) => {
+              finishing.current = true;
+              await saveProfile({ ...s, onboarded: true }).catch((e) => {
+                finishing.current = false;
+                throw e;
+              });
+              toast("Listing submitted for verification.");
+              router.replace("/dashboard/");
+            }}
+          />
+        </section>
+      )}
+
       {step === "details" && role === "sitter" && (
         <section className="animate-rise">
           <h1 className="font-display text-[30px] leading-tight text-bark">Your sitter profile</h1>
@@ -182,7 +233,11 @@ function Onboarding() {
             initial={profile ?? {}}
             submitLabel="Publish my profile"
             onSubmit={async (s) => {
-              await saveProfile({ ...s, onboarded: true });
+              finishing.current = true;
+              await saveProfile({ ...s, onboarded: true }).catch((e) => {
+                finishing.current = false;
+                throw e;
+              });
               toast("Your profile is live.");
               router.replace("/dashboard/");
             }}

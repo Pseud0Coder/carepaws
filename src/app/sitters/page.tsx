@@ -13,6 +13,7 @@ import { AppBar, Button, Chip, EmptyState, IconButton, Sheet, Skeleton } from "@
 const SORTS: { value: NonNullable<SitterFilters["sortBy"]>; label: string }[] = [
   { value: "rating", label: "Top rated" },
   { value: "reviews", label: "Most reviewed" },
+  { value: "vouched", label: "Most vouched" },
   { value: "price-low", label: "Lowest price" },
   { value: "price-high", label: "Highest price" },
 ];
@@ -27,6 +28,7 @@ function SitterSearch() {
   const [petType, setPetType] = useState(params.get("pet") || "All");
   const [sortBy, setSortBy] = useState<SitterFilters["sortBy"]>("rating");
   const [maxPrice, setMaxPrice] = useState(0);
+  const [vouchedOnly, setVouchedOnly] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   useEffect(() => {
@@ -43,17 +45,19 @@ function SitterSearch() {
       (x) =>
         (!s || x.displayName.toLowerCase().includes(s) || x.location?.toLowerCase().includes(s)) &&
         (petType === "All" || x.petTypes?.includes(petType)) &&
-        (!maxPrice || x.pricePerNight <= maxPrice)
+        (!maxPrice || x.pricePerNight <= maxPrice) &&
+        (!vouchedOnly || (x.vouchCount ?? 0) > 0)
     );
     return [...list].sort((a, b) => {
       if (sortBy === "price-low") return a.pricePerNight - b.pricePerNight;
       if (sortBy === "price-high") return b.pricePerNight - a.pricePerNight;
       if (sortBy === "reviews") return (b.reviewCount ?? 0) - (a.reviewCount ?? 0);
+      if (sortBy === "vouched") return (b.vouchCount ?? 0) - (a.vouchCount ?? 0) || (b.rating ?? 0) - (a.rating ?? 0);
       return (b.rating ?? 0) - (a.rating ?? 0);
     });
-  }, [all, search, petType, maxPrice, sortBy]);
+  }, [all, search, petType, maxPrice, sortBy, vouchedOnly]);
 
-  const activeFilters = (sortBy !== "rating" ? 1 : 0) + (maxPrice ? 1 : 0);
+  const activeFilters = (sortBy !== "rating" ? 1 : 0) + (maxPrice ? 1 : 0) + (vouchedOnly ? 1 : 0);
 
   return (
     <>
@@ -114,6 +118,7 @@ function SitterSearch() {
                   setSearch("");
                   setPetType("All");
                   setMaxPrice(0);
+                  setVouchedOnly(false);
                 }}
               >
                 Clear filters
@@ -131,6 +136,12 @@ function SitterSearch() {
               {s.label}
             </Chip>
           ))}
+        </div>
+        <h3 className="mt-6 mb-2 text-sm font-semibold text-bark">Trust</h3>
+        <div className="flex flex-wrap gap-2">
+          <Chip active={vouchedOnly} onClick={() => setVouchedOnly((v) => !v)}>
+            Vouched by a rescue or vet
+          </Chip>
         </div>
         <h3 className="mt-6 mb-2 text-sm font-semibold text-bark">Nightly budget</h3>
         <div className="flex flex-wrap gap-2">

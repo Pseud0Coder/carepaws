@@ -1,4 +1,5 @@
-export type Role = "parent" | "sitter";
+export type OrgRole = "rescue" | "vet";
+export type Role = "parent" | "sitter" | OrgRole;
 
 /** Public profile at users/{uid}. Contact details live in users/{uid}/private/contact. */
 export interface UserProfile {
@@ -19,12 +20,24 @@ export interface UserProfile {
   availability?: string[];
   responseTime?: string;
 
-  // System-managed (Cloud Functions / admin only — rules block client writes)
+  // Rescue / vet listings. Unlike people, organisations publish a phone number
+  // on purpose, so it lives on the public profile.
+  phone?: string;
+  address?: string;
+  lat?: number;
+  lng?: number;
+  hours?: string;
+  open24x7?: boolean;
+  website?: string;
+
+  // System-managed (Cloud Functions / admin only — rules block client writes).
+  // `verified` means ID-checked for sitters and vetted by an admin for organisations.
   verified?: boolean;
   topRated?: boolean;
   rating?: number;
   reviewCount?: number;
   completedStays?: number;
+  vouchCount?: number;
 }
 
 export type SitterProfile = UserProfile & {
@@ -33,6 +46,22 @@ export type SitterProfile = UserProfile & {
   petTypes: string[];
   pricePerNight: number;
 };
+
+export type OrgProfile = UserProfile & { role: OrgRole };
+
+export const isOrgRole = (r: Role | null | undefined): r is OrgRole => r === "rescue" || r === "vet";
+
+/** A rescue or vet clinic vouching for a sitter. Stored at vouches/{orgId}_{sitterId}. */
+export interface Vouch {
+  id: string;
+  orgId: string;
+  orgName: string;
+  orgPhoto: string | null;
+  orgType: OrgRole;
+  sitterId: string;
+  note?: string;
+  createdAt?: string;
+}
 
 export interface PrivateContact {
   email: string;

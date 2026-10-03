@@ -8,7 +8,8 @@
   "scripts": {
     "build": "tsc",
     "deploy": "npm run build && firebase deploy --only functions",
-    "seed": "node seed.mjs"
+    "seed": "node seed.mjs",
+    "admin": "node admin.mjs"
   },
   "dependencies": {
     "firebase-admin": "^14.5.0",

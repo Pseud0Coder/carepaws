@@ -3,7 +3,7 @@ import { PawPrint } from "lucide-react";
 /** Shown when the app was built without Firebase config, instead of crashing. */
 export default function SetupNotice() {
   return (
-    <main className="pt-safe relative z-[1] mx-auto flex min-h-dvh max-w-md flex-col justify-center px-6">
+    <main className="pt-safe relative mx-auto flex min-h-dvh max-w-md flex-col justify-center px-6">
       <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-moss text-on-moss">
         <PawPrint className="h-7 w-7" />
       </div>

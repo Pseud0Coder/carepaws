@@ -30,11 +30,29 @@ service cloud.firestore {
       function editableFields() {
         return ['uid', 'displayName', 'photoURL', 'role', 'onboarded', 'location', 'bio',
                 'services', 'petTypes', 'pricePerNight', 'experience', 'availability',
-                'responseTime', 'createdAt', 'updatedAt'];
+                'responseTime', 'phone', 'address', 'lat', 'lng', 'hours', 'open24x7',
+                'website', 'createdAt', 'updatedAt'];
+      }
+      // Organisations publish a phone number on purpose. People never do:
+      // theirs stays in the owner-only private/contact document.
+      function validOrg(m) {
+        return !(m.role == 'rescue' || m.role == 'vet')
+          ? !m.keys().hasAny(['phone', 'address', 'lat', 'lng', 'hours', 'open24x7', 'website'])
+          : optStr(m, 'address', 160) && optStr(m, 'hours', 80)
+            && (!('phone' in m) || (m.phone is string && m.phone.matches('^[+0-9 ()-]{7,20}$')))
+            && (!('website' in m) || (m.website is string && m.website.size() <= 200
+                  && (m.website == '' || m.website.matches('^https?://.*'))))
+            && (!('open24x7' in m) || m.open24x7 is bool)
+            && (!('lat' in m) || (m.lat is number && m.lat >= -90 && m.lat <= 90))
+            && (!('lng' in m) || (m.lng is number && m.lng >= -180 && m.lng <= 180))
+            // A listing can't go live without a way to reach it.
+            && (m.onboarded != true || (m.phone is string && m.address is string && m.address.size() > 0
+                  && 'location' in m && m.location is string && m.location.size() > 0));
       }
       function validProfile(m) {
         return isStr(m.displayName, 1, 60)
-          && (m.role == null || m.role in ['parent', 'sitter'])
+          && (m.role == null || m.role in ['parent', 'sitter', 'rescue', 'vet'])
+          && validOrg(m)
           && m.onboarded is bool
           && (!('photoURL' in m) || m.photoURL == null || isStr(m.photoURL, 0, 2048))
           && optStr(m, 'location', 80)
@@ -96,6 +114,7 @@ service cloud.firestore {
               'nights', 'pricePerNight', 'totalPrice', 'status', 'paymentStatus', 'notes',
               'createdAt', 'updatedAt'])
           && b.parentId == uid()
+          && userDoc(uid()).role == 'parent'
           && b.sitterId != uid()
           && b.status == 'pending'
           && b.paymentStatus == 'pending'
@@ -163,6 +182,36 @@ service cloud.firestore {
                == [uid()].toSet())
       );
       allow delete: if false;
+    }
+
+    // ─── Vouches ───────────────────────────────────────────────────────────
+    // A verified rescue or vet clinic vouches for a sitter. The ID is
+    // "{orgId}_{sitterId}", so an organisation can vouch for a sitter once.
+    // Only the organisation can write, so a sitter can't vouch for themselves.
+    // (vouchCount on the sitter's profile is maintained by a Cloud Function.)
+    match /vouches/{vouchId} {
+      function org() { return userDoc(uid()); }
+
+      allow read: if true;
+      allow create: if signedIn()
+        && data().keys().hasOnly(['orgId', 'orgName', 'orgPhoto', 'orgType', 'sitterId', 'note', 'createdAt'])
+        && vouchId == data().orgId + '_' + data().sitterId
+        && data().orgId == uid()
+        && org().role in ['rescue', 'vet']
+        && org().verified == true
+        && org().onboarded == true
+        && data().orgType == org().role
+        && data().orgName == org().displayName
+        && data().orgPhoto == org().photoURL
+        && userDoc(data().sitterId).role == 'sitter'
+        && (!('note' in data()) || (data().note is string && data().note.size() <= 300))
+        && data().createdAt == request.time;
+      // The organisation may edit its note, nothing else.
+      allow update: if signedIn() && resource.data.orgId == uid()
+        && org().verified == true
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['note'])
+        && (data().note is string && data().note.size() <= 300);
+      allow delete: if signedIn() && resource.data.orgId == uid();
     }
 
     // ─── Conversations & messages ──────────────────────────────────────────
