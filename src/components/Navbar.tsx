@@ -16,8 +16,8 @@ const TABS = {
 };
 
 const PEOPLE_TABS = [TABS.discover, TABS.nearby, TABS.stays, TABS.inbox, TABS.circle];
-// Rescues and clinics have no bookings or chats, so their bar is shorter.
-const ORG_TABS = [TABS.discover, TABS.nearby, TABS.circle];
+// Rescues, clinics and people just looking around have no bookings or chats, so their bar is shorter.
+const SHORT_TABS = [TABS.discover, TABS.nearby, TABS.circle];
 
 /** Routes that show the bottom navigation. Detail and flow screens hide it. */
 export const TAB_ROUTES = ["/", "/nearby/", "/bookings/", "/inbox/", "/community/", "/dashboard/", "/sitters/"];
@@ -33,7 +33,7 @@ export default function Navbar() {
   const raw = usePathname() || "/";
   const path = raw.endsWith("/") ? raw : `${raw}/`;
   if (!isTabRoute(raw)) return null;
-  const tabs = isOrgRole(profile?.role) ? ORG_TABS : PEOPLE_TABS;
+  const tabs = isOrgRole(profile?.role) || profile?.role === "explorer" ? SHORT_TABS : PEOPLE_TABS;
 
   return (
     <nav className="pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-oat-deep/60 bg-paper/95 backdrop-blur-md">

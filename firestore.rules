@@ -30,8 +30,23 @@ service cloud.firestore {
       function editableFields() {
         return ['uid', 'displayName', 'photoURL', 'role', 'onboarded', 'location', 'bio',
                 'services', 'petTypes', 'pricePerNight', 'experience', 'availability',
-                'responseTime', 'phone', 'address', 'lat', 'lng', 'hours', 'open24x7',
+                'responseTime', 'home', 'phone', 'address', 'lat', 'lng', 'hours', 'open24x7',
                 'website', 'createdAt', 'updatedAt'];
+      }
+      // A sitter can't go live until they have submitted identity verification.
+      function kycOk() {
+        return exists(/databases/$(database)/documents/kyc/$(userId))
+          && get(/databases/$(database)/documents/kyc/$(userId)).data.status in ['submitted', 'approved'];
+      }
+      function validHome(m) {
+        return !('home' in m)
+          || (m.role == 'sitter' && m.home is map
+              && m.home.keys().hasOnly(['type', 'fencedYard', 'hasOwnPets', 'ownPets', 'children', 'smokeFree', 'maxHoursAlone'])
+              && m.home.type in ['apartment', 'house', 'farm']
+              && m.home.fencedYard is bool && m.home.hasOwnPets is bool
+              && m.home.children is bool && m.home.smokeFree is bool
+              && m.home.ownPets is string && m.home.ownPets.size() <= 100
+              && m.home.maxHoursAlone is int && m.home.maxHoursAlone >= 0 && m.home.maxHoursAlone <= 12);
       }
       // Organisations publish a phone number on purpose. People never do:
       // theirs stays in the owner-only private/contact document.
@@ -51,8 +66,9 @@ service cloud.firestore {
       }
       function validProfile(m) {
         return isStr(m.displayName, 1, 60)
-          && (m.role == null || m.role in ['parent', 'sitter', 'rescue', 'vet'])
+          && (m.role == null || m.role in ['parent', 'sitter', 'explorer', 'rescue', 'vet'])
           && validOrg(m)
+          && validHome(m)
           && m.onboarded is bool
           && (!('photoURL' in m) || m.photoURL == null || isStr(m.photoURL, 0, 2048))
           && optStr(m, 'location', 80)
@@ -65,7 +81,7 @@ service cloud.firestore {
           && (!('pricePerNight' in m) || (m.pricePerNight is int && m.pricePerNight >= 100 && m.pricePerNight <= 100000))
           // A sitter can't go live without a rate and the pets they take.
           && (!(m.role == 'sitter' && m.onboarded == true)
-              || (m.pricePerNight is int && m.petTypes is list && m.petTypes.size() > 0));
+              || (m.pricePerNight is int && m.petTypes is list && m.petTypes.size() > 0 && kycOk()));
       }
 
       allow read: if true;
@@ -76,14 +92,66 @@ service cloud.firestore {
       allow update: if signedIn() && uid() == userId
         && changed().hasOnly(editableFields())
         && !changed().hasAny(['uid'])
-        // Role is fixed once onboarding is finished.
-        && (data().role == resource.data.role || resource.data.onboarded == false)
+        // Role is fixed once onboarding is finished, except that someone who was just
+        // looking around may choose a role later (and then completes onboarding for it).
+        && (data().role == resource.data.role || resource.data.onboarded == false || resource.data.role == 'explorer')
         && validProfile(data());
       allow delete: if false;
 
       match /private/{docId} {
         allow read, write: if signedIn() && uid() == userId;
       }
+    }
+
+    // ─── Identity verification (KYC) ────────────────────────────────────────
+    // A sitter's case. Only the owner can read it, and only an admin (Admin SDK, which
+    // bypasses rules) can move it past "submitted" or set the sitter's verified badge.
+    // The ID images are in Storage under kyc/{uid}/ and are never readable by clients.
+    // Full ID numbers are never collected, only the last four characters.
+    match /kyc/{userId} {
+      // "kyc/{userId}/<file>": compared by path segment, so no pattern characters can sneak in.
+      function ownFile(path) {
+        return path is string && path.split('/').size() == 3
+          && path.split('/')[0] == 'kyc' && path.split('/')[1] == userId;
+      }
+      function validKyc(m) {
+        return m.keys().hasOnly(['status', 'legalName', 'dob', 'idType', 'idLast4', 'addressLine', 'city',
+              'pincode', 'emergencyName', 'emergencyPhone', 'idFront', 'idBack', 'selfie', 'addressProof',
+              'policeCert', 'hasPoliceCert', 'declarations', 'consent', 'consentAt', 'submittedAt'])
+          && m.status == 'submitted'
+          && userDoc(userId).role == 'sitter'
+          // A verified mobile number, read from the sign-in token.
+          && 'phone_number' in request.auth.token
+          && isStr(m.legalName, 2, 80)
+          && isDay(m.dob) && day(m.dob) <= request.time - duration.value(6575, 'd')
+          && m.idType in ['aadhaar', 'pan', 'passport', 'driving_licence', 'voter_id']
+          && m.idLast4 is string && m.idLast4.matches('^[A-Za-z0-9]{4}$')
+          && isStr(m.addressLine, 5, 160) && isStr(m.city, 2, 60)
+          && m.pincode is string && m.pincode.matches('^[0-9]{6}$')
+          && isStr(m.emergencyName, 2, 60)
+          && m.emergencyPhone is string && m.emergencyPhone.matches('^[+0-9 ()-]{7,20}$')
+          && ownFile(m.idFront)
+          && ownFile(m.selfie)
+          && (m.idType == 'pan' || ('idBack' in m && ownFile(m.idBack)))
+          && (m.idType != 'pan' || ('addressProof' in m && ownFile(m.addressProof)))
+          && (!('policeCert' in m) || ownFile(m.policeCert))
+          && m.hasPoliceCert == ('policeCert' in m)
+          && m.consent == true && m.consentAt == request.time && m.submittedAt == request.time
+          && m.declarations.keys().hasOnly(['version', 'honestProfile', 'safeHome', 'ownPetsDisclosed',
+                'noUnattended', 'dailyUpdates', 'personalCare', 'humaneHandling', 'emergencyPlan', 'reportIncidents'])
+          && m.declarations.version == 1
+          && m.declarations.honestProfile == true && m.declarations.safeHome == true
+          && m.declarations.ownPetsDisclosed == true && m.declarations.noUnattended == true
+          && m.declarations.dailyUpdates == true && m.declarations.personalCare == true
+          && m.declarations.humaneHandling == true && m.declarations.emergencyPlan == true
+          && m.declarations.reportIncidents == true;
+      }
+
+      allow read: if signedIn() && uid() == userId;
+      allow create: if signedIn() && uid() == userId && validKyc(data());
+      // After a rejection the sitter may fix it and resubmit. Approved cases are frozen.
+      allow update: if signedIn() && uid() == userId && resource.data.status == 'rejected' && validKyc(data());
+      allow delete: if false;
     }
 
     // ─── Pets ──────────────────────────────────────────────────────────────
@@ -118,7 +186,7 @@ service cloud.firestore {
           && b.sitterId != uid()
           && b.status == 'pending'
           && b.paymentStatus == 'pending'
-          && sitter.role == 'sitter' && sitter.onboarded == true
+          && sitter.role == 'sitter' && sitter.onboarded == true && sitter.verified == true
           && pet.ownerId == uid()
           && isDay(b.startDate) && isDay(b.endDate)
           && day(b.startDate) >= request.time - duration.value(1, 'd')
@@ -253,6 +321,8 @@ service cloud.firestore {
               'title', 'text', 'likedBy', 'commentCount', 'createdAt'])
         && data().authorId == uid()
         && data().category in ['tip', 'question', 'story']
+        // People just looking around must choose a role (and finish onboarding) before posting.
+        && userDoc(uid()).role in ['parent', 'sitter', 'rescue', 'vet'] && userDoc(uid()).onboarded == true
         && data().authorRole == userDoc(uid()).role
         && isStr(data().title, 4, 120) && isStr(data().text, 10, 4000)
         && data().likedBy.size() == 0 && data().commentCount == 0;

@@ -10,13 +10,14 @@
     "typecheck": "tsc --noEmit",
     "emulators": "firebase emulators:start --only auth,firestore,storage,functions --project demo-carepaws",
     "seed:emulator": "FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 node functions/seed.mjs --project demo-carepaws",
-    "test:rules": "firebase emulators:exec --only firestore --project demo-carepaws \"node --test tests/\"",
+    "test:rules": "firebase emulators:exec --only firestore,storage --project demo-carepaws \"node --test tests/\"",
     "android:sync": "next build && cap sync android",
     "android:open": "cap open android",
     "android:apk": "npm run android:sync && cd android && ./gradlew assembleDebug",
     "android:release": "npm run android:sync && cd android && ./gradlew assembleRelease"
   },
   "dependencies": {
+    "@capacitor-firebase/authentication": "^8.5.2",
     "@capacitor/android": "^8.5.2",
     "@capacitor/app": "^8.1.2",
     "@capacitor/core": "^8.5.2",

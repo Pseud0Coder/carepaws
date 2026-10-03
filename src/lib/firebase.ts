@@ -47,7 +47,11 @@ export function auth(): Auth {
   _auth = Capacitor.isNativePlatform()
     ? initializeAuth(a, { persistence: [indexedDBLocalPersistence, browserLocalPersistence] })
     : getAuth(a);
-  if (useEmulators) connectAuthEmulator(_auth, "http://127.0.0.1:9099", { disableWarnings: true });
+  if (useEmulators) {
+    connectAuthEmulator(_auth, "http://127.0.0.1:9099", { disableWarnings: true });
+    // The emulator prints SMS codes instead of sending them, so skip reCAPTCHA.
+    _auth.settings.appVerificationDisabledForTesting = true;
+  }
   return _auth;
 }
 

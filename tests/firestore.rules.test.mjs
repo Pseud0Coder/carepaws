@@ -2,6 +2,7 @@
 // (starts the Firestore emulator via firebase-tools and runs this file)
 import { readFileSync } from "node:fs";
 import { after, before, beforeEach, describe, test } from "node:test";
+import { ref, uploadBytes, getBytes } from "firebase/storage";
 import {
   assertFails,
   assertSucceeds,
@@ -37,6 +38,7 @@ const sitter = {
   photoURL: null,
   role: "sitter",
   onboarded: true,
+  verified: true,
   pricePerNight: 2000,
   petTypes: ["Dogs"],
   services: ["Overnight stays"],
@@ -94,6 +96,7 @@ before(async () => {
   env = await initializeTestEnvironment({
     projectId: "demo-carepaws",
     firestore: { rules: readFileSync("firestore.rules", "utf8") },
+    storage: { rules: readFileSync("storage.rules", "utf8") },
   });
 });
 
@@ -101,7 +104,9 @@ after(async () => env?.cleanup());
 
 beforeEach(async () => {
   await env.clearFirestore();
+  await env.clearStorage();
   await seed(async (db) => {
+    await setDoc(doc(db, "kyc/sitter1"), { status: "approved" });
     await setDoc(doc(db, "users/sitter1"), sitter);
     await setDoc(doc(db, "users/parent1"), parent);
     await setDoc(doc(db, "users/parent2"), { ...parent, uid: "parent2" });
@@ -117,7 +122,8 @@ describe("users", () => {
     await assertSucceeds(getDoc(doc(anon(), "users/sitter1")));
   });
   test("a user cannot verify themselves or set their rating", async () => {
-    await assertFails(updateDoc(doc(as("sitter1"), "users/sitter1"), { verified: true }));
+    await assertFails(updateDoc(doc(as("sitter1"), "users/sitter1"), { verified: false }));
+    await assertFails(updateDoc(doc(as("parent1"), "users/parent1"), { verified: true }));
     await assertFails(updateDoc(doc(as("sitter1"), "users/sitter1"), { rating: 5, reviewCount: 999 }));
   });
   test("a user can edit their own bio but not someone else's", async () => {
@@ -405,5 +411,169 @@ describe("vouches", () => {
     await assertFails(deleteDoc(doc(as("sitter1"), "vouches/vet1_sitter1")));
     await assertFails(deleteDoc(doc(as("vet2"), "vouches/vet1_sitter1")));
     await assertSucceeds(deleteDoc(doc(as("vet1"), "vouches/vet1_sitter1")));
+  });
+});
+
+// ─── Just looking around ──────────────────────────────────────────────────
+
+describe("explorers (just looking around)", () => {
+  const explorer = { uid: "ex1", displayName: "Member 1234", photoURL: null, role: "explorer", onboarded: true };
+
+  test("can skip onboarding entirely", async () => {
+    await assertSucceeds(setDoc(doc(as("ex1"), "users/ex1"), explorer));
+  });
+  test("can later choose a role, which reopens onboarding; established roles stay fixed", async () => {
+    await seed((db) => setDoc(doc(db, "users/ex1"), explorer));
+    await assertSucceeds(updateDoc(doc(as("ex1"), "users/ex1"), { role: "parent", onboarded: false }));
+    await assertFails(updateDoc(doc(as("parent1"), "users/parent1"), { role: "sitter" }));
+  });
+  test("can't book, can't post, can't message", async () => {
+    await seed((db) => setDoc(doc(db, "users/ex1"), explorer));
+    await seed((db) => setDoc(doc(db, "pets/expet"), { ownerId: "ex1", name: "X", type: "Dog" }));
+    await assertFails(setDoc(doc(as("ex1"), "bookings/b1"), booking({ parentId: "ex1", petId: "expet" })));
+    await assertFails(
+      setDoc(doc(as("ex1"), "posts/p1"), {
+        authorId: "ex1", author: "x", authorPhoto: null, authorRole: "explorer", category: "tip",
+        title: "Hello there", text: "A post from an explorer.", likedBy: [], commentCount: 0, createdAt: serverTimestamp(),
+      })
+    );
+  });
+});
+
+// ─── Sitter identity verification (KYC) ───────────────────────────────────
+
+describe("sitter KYC", () => {
+  const withPhone = (uid) => env.authenticatedContext(uid, { phone_number: "+910000000001" }).firestore();
+  const newSitter = { uid: "ns1", displayName: "New Sitter", photoURL: null, role: "sitter", onboarded: false };
+  const caseDoc = (over = {}) => ({
+    status: "submitted",
+    legalName: "Nia Sitter",
+    dob: "1995-04-12",
+    idType: "aadhaar",
+    idLast4: "1234",
+    addressLine: "12 Hill Road, Bandra",
+    city: "Mumbai",
+    pincode: "400050",
+    emergencyName: "Raj Sitter",
+    emergencyPhone: "+91 00000 00007",
+    idFront: "kyc/ns1/id-front.jpg",
+    idBack: "kyc/ns1/id-back.jpg",
+    selfie: "kyc/ns1/selfie.jpg",
+    hasPoliceCert: false,
+    declarations: {
+      version: 1, honestProfile: true, safeHome: true, ownPetsDisclosed: true, noUnattended: true,
+      dailyUpdates: true, personalCare: true, humaneHandling: true, emergencyPlan: true, reportIncidents: true,
+    },
+    consent: true,
+    consentAt: serverTimestamp(),
+    submittedAt: serverTimestamp(),
+    ...over,
+  });
+  beforeEach(() => seed((db) => setDoc(doc(db, "users/ns1"), newSitter)));
+
+  test("a sitter with a verified phone can submit a complete case, and read it back", async () => {
+    await assertSucceeds(setDoc(doc(withPhone("ns1"), "kyc/ns1"), caseDoc()));
+    await assertSucceeds(getDoc(doc(withPhone("ns1"), "kyc/ns1")));
+  });
+  test("nobody else can read a case", async () => {
+    await seed((db) => setDoc(doc(db, "kyc/ns1"), { ...caseDoc(), submittedAt: new Date(), consentAt: new Date() }));
+    await assertFails(getDoc(doc(as("parent1"), "kyc/ns1")));
+    await assertFails(getDoc(doc(anon(), "kyc/ns1")));
+    await assertFails(getDoc(doc(as("sitter1"), "kyc/ns1")));
+  });
+  test("needs a verified mobile number", async () => {
+    await assertFails(setDoc(doc(as("ns1"), "kyc/ns1"), caseDoc()));
+  });
+  test("must be an adult, with a 4-character ID tail, valid pincode and a selfie", async () => {
+    const db = withPhone("ns1");
+    const y = new Date().getFullYear();
+    await assertFails(setDoc(doc(db, "kyc/ns1"), caseDoc({ dob: `${y - 17}-01-01` })));
+    await assertFails(setDoc(doc(db, "kyc/ns1"), caseDoc({ idLast4: "123456789012" }))); // a full number must never be stored
+    await assertFails(setDoc(doc(db, "kyc/ns1"), caseDoc({ pincode: "40005" })));
+    await assertFails(setDoc(doc(db, "kyc/ns1"), (({ selfie, ...r }) => r)(caseDoc())));
+  });
+  test("files must be the sitter's own", async () => {
+    await assertFails(setDoc(doc(withPhone("ns1"), "kyc/ns1"), caseDoc({ idFront: "kyc/someone-else/id-front.jpg" })));
+  });
+  test("PAN has no address, so it needs an address proof", async () => {
+    const db = withPhone("ns1");
+    const pan = { idType: "pan", idLast4: "234F" };
+    const noBack = (({ idBack, ...r }) => r)(caseDoc(pan));
+    await assertFails(setDoc(doc(db, "kyc/ns1"), noBack));
+    await assertSucceeds(setDoc(doc(db, "kyc/ns1"), { ...noBack, addressProof: "kyc/ns1/address-proof.jpg" }));
+  });
+  test("an ID that has a back side needs it", async () => {
+    await assertFails(setDoc(doc(withPhone("ns1"), "kyc/ns1"), (({ idBack, ...r }) => r)(caseDoc())));
+    await assertSucceeds(setDoc(doc(withPhone("ns1"), "kyc/ns1"), caseDoc()));
+  });
+  test("every care standard and the consent are mandatory", async () => {
+    const db = withPhone("ns1");
+    await assertFails(setDoc(doc(db, "kyc/ns1"), caseDoc({ consent: false })));
+    await assertFails(setDoc(doc(db, "kyc/ns1"), caseDoc({ declarations: { ...caseDoc().declarations, safeHome: false } })));
+    await assertFails(setDoc(doc(db, "kyc/ns1"), caseDoc({ declarations: (({ humaneHandling, ...r }) => r)(caseDoc().declarations) })));
+  });
+  test("a client can never approve itself", async () => {
+    await assertFails(setDoc(doc(withPhone("ns1"), "kyc/ns1"), caseDoc({ status: "approved" })));
+    await assertFails(updateDoc(doc(as("ns1"), "users/ns1"), { verified: true }));
+    await assertFails(updateDoc(doc(as("ns1"), "users/ns1"), { backgroundChecked: true }));
+  });
+  test("a non-sitter can't open a case", async () => {
+    await seed((db) => setDoc(doc(db, "users/ns2"), { ...newSitter, uid: "ns2", role: "parent" }));
+    await assertFails(setDoc(doc(withPhone("ns2"), "kyc/ns2"), caseDoc({ idFront: "kyc/ns2/id-front.jpg", idBack: "kyc/ns2/id-back.jpg", selfie: "kyc/ns2/selfie.jpg" })));
+  });
+  test("a rejected case can be fixed and resubmitted; open and approved ones are frozen", async () => {
+    await seed((db) => setDoc(doc(db, "kyc/ns1"), { ...caseDoc(), status: "rejected", reason: "Selfie too dark", submittedAt: new Date(), consentAt: new Date() }));
+    await assertSucceeds(setDoc(doc(withPhone("ns1"), "kyc/ns1"), caseDoc()));
+    await seed((db) => updateDoc(doc(db, "kyc/ns1"), { status: "submitted" }));
+    await assertFails(setDoc(doc(withPhone("ns1"), "kyc/ns1"), caseDoc({ legalName: "Someone Else" })));
+    await seed((db) => updateDoc(doc(db, "kyc/ns1"), { status: "approved" }));
+    await assertFails(setDoc(doc(withPhone("ns1"), "kyc/ns1"), caseDoc({ legalName: "Someone Else" })));
+  });
+  test("a sitter can't go live without a submitted case", async () => {
+    const ready = { onboarded: true, pricePerNight: 1800, petTypes: ["Dogs"] };
+    await assertFails(updateDoc(doc(as("ns1"), "users/ns1"), ready));
+    await assertSucceeds(setDoc(doc(withPhone("ns1"), "kyc/ns1"), caseDoc()));
+    await assertSucceeds(updateDoc(doc(as("ns1"), "users/ns1"), ready));
+  });
+  test("home details are sitter-only and validated", async () => {
+    const home = { type: "house", fencedYard: true, hasOwnPets: false, ownPets: "", children: false, smokeFree: true, maxHoursAlone: 4 };
+    await assertSucceeds(updateDoc(doc(as("ns1"), "users/ns1"), { home }));
+    await assertFails(updateDoc(doc(as("ns1"), "users/ns1"), { home: { ...home, maxHoursAlone: 40 } }));
+    await assertFails(updateDoc(doc(as("parent1"), "users/parent1"), { home }));
+  });
+  test("bookings need a verified sitter", async () => {
+    await seed((db) => updateDoc(doc(db, "users/sitter1"), { verified: false }));
+    await assertFails(setDoc(doc(as("parent1"), "bookings/b1"), booking()));
+    await seed((db) => updateDoc(doc(db, "users/sitter1"), { verified: true }));
+    await assertSucceeds(setDoc(doc(as("parent1"), "bookings/b1"), booking()));
+  });
+});
+
+describe("KYC document storage", () => {
+  const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+  const st = (uid) => env.authenticatedContext(uid).storage();
+  const put = (uid, path, type = "image/jpeg", data = bytes) => uploadBytes(ref(st(uid), path), data, { contentType: type });
+
+  test("the owner can upload documents but never read them back", async () => {
+    await assertSucceeds(put("ns1", "kyc/ns1/id-front.jpg"));
+    await assertSucceeds(put("ns1", "kyc/ns1/address-proof.pdf", "application/pdf"));
+    await assertFails(getBytes(ref(st("ns1"), "kyc/ns1/id-front.jpg")));
+  });
+  test("nobody else can upload to or read someone's folder", async () => {
+    await assertFails(put("parent1", "kyc/ns1/id-front.jpg"));
+    await assertFails(uploadBytes(ref(env.unauthenticatedContext().storage(), "kyc/ns1/id-front.jpg"), bytes, { contentType: "image/jpeg" }));
+    await env.withSecurityRulesDisabled(async (c) => uploadBytes(ref(c.storage(), "kyc/ns1/selfie.jpg"), bytes, { contentType: "image/jpeg" }));
+    await assertFails(getBytes(ref(st("parent1"), "kyc/ns1/selfie.jpg")));
+  });
+  test("only expected file names, types and sizes", async () => {
+    await assertFails(put("ns1", "kyc/ns1/anything.jpg"));
+    await assertFails(put("ns1", "kyc/ns1/selfie.jpg", "text/html"));
+    await assertFails(put("ns1", "kyc/ns1/selfie.jpg", "image/jpeg", new Uint8Array(9 * 1024 * 1024)));
+  });
+  test("approved documents can't be swapped out; rejected cases can re-upload", async () => {
+    await seed((db) => setDoc(doc(db, "kyc/ns1"), { status: "approved" }));
+    await assertFails(put("ns1", "kyc/ns1/id-front.jpg"));
+    await seed((db) => setDoc(doc(db, "kyc/ns1"), { status: "rejected" }));
+    await assertSucceeds(put("ns1", "kyc/ns1/id-front.jpg"));
   });
 });

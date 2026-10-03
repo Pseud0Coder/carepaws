@@ -29,6 +29,10 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   saveProfile: (data: Partial<EditableProfile>) => Promise<void>;
   refreshProfile: () => Promise<void>;
+  /** The verified phone number on the signed-in account, if any. */
+  phoneNumber: string | null;
+  /** Reloads the Firebase user and its token (call after linking a phone number). */
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -50,11 +54,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(isFirebaseConfigured);
+  const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isFirebaseConfigured) return;
     return onAuthStateChanged(auth(), async (u) => {
       setUser(u);
+      setPhoneNumber(u?.phoneNumber ?? null);
       if (u) {
         try {
           setProfile(await ensureProfile(u));
@@ -72,6 +78,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refreshProfile = useCallback(async () => {
     const u = auth().currentUser;
     if (u) setProfile(await getProfile(u.uid));
+  }, []);
+
+  const refreshUser = useCallback(async () => {
+    const u = auth().currentUser;
+    if (!u) return;
+    await u.reload();
+    // Security rules read the phone number from the ID token, so force a fresh one.
+    await u.getIdToken(true);
+    setPhoneNumber(u.phoneNumber ?? null);
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
@@ -139,6 +154,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signOut,
         saveProfile,
         refreshProfile,
+        phoneNumber,
+        refreshUser,
       }}
     >
       {children}

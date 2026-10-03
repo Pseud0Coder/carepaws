@@ -1,13 +1,13 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { PET_EMOJI, PET_TYPES, SERVICES, WEEKDAYS } from "@/lib/constants";
+import { HOME_TYPES, PET_EMOJI, PET_TYPES, SERVICES, WEEKDAYS } from "@/lib/constants";
 import type { EditableProfile } from "@/lib/db";
-import type { UserProfile } from "@/lib/types";
+import type { SitterHome, UserProfile } from "@/lib/types";
 import { Button, Chip, ErrorNote, Field, Input, Select } from "./ui";
 
 export type SitterSettings = Required<
-  Pick<EditableProfile, "services" | "petTypes" | "pricePerNight" | "experience" | "availability" | "responseTime">
+  Pick<EditableProfile, "services" | "petTypes" | "pricePerNight" | "experience" | "availability" | "responseTime" | "home">
 >;
 
 function toggle(list: string[], v: string) {
@@ -29,6 +29,10 @@ export default function SitterSettingsForm({
   const [experience, setExperience] = useState(initial.experience ?? "");
   const [availability, setAvailability] = useState<string[]>(initial.availability ?? [...WEEKDAYS]);
   const [responseTime, setResponseTime] = useState(initial.responseTime ?? "Within a few hours");
+  const [home, setHome] = useState<SitterHome>(
+    initial.home ?? { type: "apartment", fencedYard: false, hasOwnPets: false, ownPets: "", children: false, smokeFree: true, maxHoursAlone: 4 }
+  );
+  const setH = <K extends keyof SitterHome>(k: K, v: SitterHome[K]) => setHome((h) => ({ ...h, [k]: v }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -41,7 +45,15 @@ export default function SitterSettingsForm({
     setError("");
     setSaving(true);
     try {
-      await onSubmit({ services, petTypes, pricePerNight, experience: experience.trim(), availability, responseTime });
+      await onSubmit({
+        services,
+        petTypes,
+        pricePerNight,
+        experience: experience.trim(),
+        availability,
+        responseTime,
+        home: { ...home, ownPets: home.hasOwnPets ? home.ownPets.trim() : "" },
+      });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -79,6 +91,49 @@ export default function SitterSettingsForm({
               {d}
             </Chip>
           ))}
+        </div>
+      </section>
+      <section>
+        <h3 className="mb-1 text-sm font-semibold text-bark">Your home</h3>
+        <p className="mb-3 text-xs text-stone">Pet parents see this on your profile, so be accurate. It’s part of your care standards.</p>
+        <div className="flex flex-wrap gap-2">
+          {HOME_TYPES.map((t) => (
+            <Chip key={t.id} active={home.type === t.id} onClick={() => setH("type", t.id)}>
+              {t.label}
+            </Chip>
+          ))}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Chip active={home.fencedYard} onClick={() => setH("fencedYard", !home.fencedYard)}>
+            Secure fenced yard
+          </Chip>
+          <Chip active={home.smokeFree} onClick={() => setH("smokeFree", !home.smokeFree)}>
+            Smoke-free
+          </Chip>
+          <Chip active={home.children} onClick={() => setH("children", !home.children)}>
+            Children at home
+          </Chip>
+          <Chip active={home.hasOwnPets} onClick={() => setH("hasOwnPets", !home.hasOwnPets)}>
+            I have pets of my own
+          </Chip>
+        </div>
+        {home.hasOwnPets && (
+          <div className="mt-3">
+            <Field label="Your pets">
+              <Input value={home.ownPets} onChange={(e) => setH("ownPets", e.target.value)} placeholder="2 Indie dogs, 1 cat (all vaccinated)" maxLength={100} />
+            </Field>
+          </div>
+        )}
+        <div className="mt-3">
+          <Field label="Longest a pet is ever left alone" hint="You’ve promised never to exceed this.">
+            <Select value={home.maxHoursAlone} onChange={(e) => setH("maxHoursAlone", Number(e.target.value))}>
+              <option value={0}>Never alone, I’m always home</option>
+              <option value={2}>Up to 2 hours</option>
+              <option value={4}>Up to 4 hours</option>
+              <option value={6}>Up to 6 hours</option>
+              <option value={8}>Up to 8 hours</option>
+            </Select>
+          </Field>
         </div>
       </section>
       <div className="grid grid-cols-2 gap-3">

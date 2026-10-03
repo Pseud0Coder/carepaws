@@ -11,6 +11,7 @@ import { cn } from "@/lib/cn";
 import Avatar from "@/components/Avatar";
 import PetForm from "@/components/PetForm";
 import RequireAuth from "@/components/RequireAuth";
+import { ExplorerGate } from "@/components/UpgradeSheet";
 import { AppBar, Button, EmptyState, ErrorNote, Field, FullScreenLoader, Input, Sheet, TextArea, useToast } from "@/components/ui";
 
 /** Maps a pet record type ("Dog") to the sitter's accepted list ("Dogs"). */
@@ -42,8 +43,9 @@ function BookingForm({ profile }: { profile: UserProfile }) {
 
   if (sitter === undefined) return <FullScreenLoader />;
   if (!sitter) return <EmptyState icon={<Info className="h-7 w-7" />} title="Sitter not found" />;
+  if (profile.role === "explorer") return <ExplorerGate />;
   if (profile.role !== "parent")
-    return <EmptyState icon={<Info className="h-7 w-7" />} title="Bookings are for pet parents" body="Sitter accounts can't request stays." />;
+    return <EmptyState icon={<Info className="h-7 w-7" />} title="Bookings are for pet parents" body="Sitter, rescue and clinic accounts can’t request stays." />;
 
   const nights = nightsBetween(start, end);
   const total = nights > 0 ? nights * sitter.pricePerNight : 0;

@@ -199,10 +199,25 @@ const vouches = [
 const vouchCounts = {};
 for (const [, sitterId] of vouches) vouchCounts[sitterId] = (vouchCounts[sitterId] ?? 0) + 1;
 
+const homes = {
+  seed_sitter_priya: { type: "apartment", fencedYard: false, hasOwnPets: true, ownPets: "1 Indie cat (vaccinated)", children: false, smokeFree: true, maxHoursAlone: 2 },
+  seed_sitter_arjun: { type: "apartment", fencedYard: false, hasOwnPets: false, ownPets: "", children: false, smokeFree: true, maxHoursAlone: 4 },
+  seed_sitter_sneha: { type: "house", fencedYard: true, hasOwnPets: true, ownPets: "2 dogs, 1 parrot (all vaccinated)", children: false, smokeFree: true, maxHoursAlone: 0 },
+  seed_sitter_vikram: { type: "house", fencedYard: true, hasOwnPets: true, ownPets: "2 Indie dogs (vaccinated)", children: true, smokeFree: true, maxHoursAlone: 2 },
+  seed_sitter_meera: { type: "apartment", fencedYard: false, hasOwnPets: true, ownPets: "3 cats (vaccinated)", children: false, smokeFree: true, maxHoursAlone: 4 },
+  seed_sitter_rohan: { type: "farm", fencedYard: true, hasOwnPets: false, ownPets: "", children: false, smokeFree: false, maxHoursAlone: 6 },
+};
 const batch = db.batch();
-sitters.forEach((s, n) =>
+sitters.forEach((s, n) => {
+  // Rohan is the demo of a sitter still waiting for identity verification: he is hidden until approved.
+  const pending = !s.verified;
+  batch.set(db.doc(`kyc/${s.uid}`), pending
+    ? { status: "submitted", legalName: s.displayName, idType: "aadhaar", idLast4: "0000", hasPoliceCert: false, submittedAt: daysAgo(1), seeded: true }
+    : { status: "approved", legalName: s.displayName, idType: "aadhaar", idLast4: "0000", hasPoliceCert: false, reviewedAt: daysAgo(30), reviewedBy: "seed", seeded: true });
   batch.set(db.doc(`users/${s.uid}`), {
     ...s,
+    home: homes[s.uid],
+    backgroundChecked: s.uid === "seed_sitter_priya" || s.uid === "seed_sitter_sneha",
     photoURL: null,
     role: "sitter",
     onboarded: true,
@@ -210,8 +225,8 @@ sitters.forEach((s, n) =>
     vouchCount: vouchCounts[s.uid] ?? 0,
     createdAt: daysAgo(400 - n * 30),
     updatedAt: daysAgo(1),
-  })
-);
+  });
+});
 reviews.forEach(([sitterId, author, rating, petType, text, response], n) =>
   batch.set(db.doc(`reviews/seed_booking_${n + 1}`), {
     sitterId,

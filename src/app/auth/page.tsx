@@ -2,11 +2,14 @@
 
 import { Suspense, useEffect, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { PawPrint } from "lucide-react";
+import Link from "next/link";
+import { Mail, PawPrint, Smartphone } from "lucide-react";
 import { authErrorMessage, useAuth } from "@/lib/auth-context";
+import PhoneOtp from "@/components/PhoneOtp";
 import { AppBar, Button, ErrorNote, Field, Input, useToast } from "@/components/ui";
 
 type Mode = "signin" | "signup" | "reset";
+type Method = "choose" | "phone" | "email";
 
 function GoogleMark() {
   return (
@@ -25,6 +28,7 @@ function AuthScreen() {
   const params = useSearchParams();
   const toast = useToast();
   const [mode, setMode] = useState<Mode>(params.get("mode") === "signup" ? "signup" : "signin");
+  const [method, setMethod] = useState<Method>("choose");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -76,92 +80,100 @@ function AuthScreen() {
   const titles: Record<Mode, [string, string]> = {
     signin: ["Welcome back", "Sign in to see your stays and messages."],
     signup: ["Join CarePaws", "Find a sitter you trust, or become one."],
-    reset: ["Reset password", "We'll email you a link to set a new one."],
+    reset: ["Reset password", "We’ll email you a link to set a new one."],
   };
+  const heading =
+    method === "phone" ? ["Your mobile number", "We’ll text you a code. No password to remember."] : method === "email" ? titles[mode] : ["Welcome to CarePaws", "Sign in or create an account in a few seconds."];
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <AppBar back transparent />
+      <AppBar back={method === "choose" ? true : undefined} title={method === "choose" ? undefined : <button onClick={() => setMethod("choose")} className="text-sm font-semibold text-moss">← All options</button>} transparent />
       <main className="flex flex-1 flex-col px-6 pb-10">
         <div className="mt-2 mb-8">
           <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-moss text-on-moss shadow-soft">
             <PawPrint className="h-7 w-7" />
           </div>
-          <h1 className="font-display text-[32px] leading-tight text-bark">{titles[mode][0]}</h1>
-          <p className="mt-2 text-bark-soft">{titles[mode][1]}</p>
+          <h1 className="font-display text-[32px] leading-tight text-bark">{heading[0]}</h1>
+          <p className="mt-2 text-bark-soft">{heading[1]}</p>
         </div>
 
-        {mode !== "reset" && (
-          <>
+        {method === "choose" && (
+          <div className="space-y-3">
+            <Button size="lg" block onClick={() => setMethod("phone")}>
+              <Smartphone className="h-5 w-5" /> Continue with phone
+            </Button>
             <Button variant="secondary" size="lg" block onClick={google} loading={busy === "google"} disabled={!!busy}>
               {busy !== "google" && <GoogleMark />}
               Continue with Google
             </Button>
-            <div className="my-6 flex items-center gap-3 text-xs font-medium tracking-wide text-stone uppercase">
-              <span className="h-px flex-1 bg-oat-deep" />
-              or with email
-              <span className="h-px flex-1 bg-oat-deep" />
+            <Button variant="secondary" size="lg" block onClick={() => setMethod("email")} disabled={!!busy}>
+              <Mail className="h-5 w-5" /> Continue with email
+            </Button>
+            <ErrorNote>{error}</ErrorNote>
+            <div className="pt-5 text-center">
+              <Link href="/" className="text-sm font-semibold text-moss">
+                Just looking around? Browse without an account →
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {method === "phone" && <PhoneOtp mode="signin" onDone={() => undefined} submitLabel="Verify and continue" />}
+
+        {method === "email" && (
+          <>
+            <form onSubmit={submit} className="space-y-4">
+              {mode === "signup" && (
+                <Field label="Your name">
+                  <Input value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" required />
+                </Field>
+              )}
+              <Field label="Email">
+                <Input type="email" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required />
+              </Field>
+              {mode !== "reset" && (
+                <Field label="Password" hint={mode === "signup" ? "At least 6 characters." : undefined}>
+                  <Input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                    minLength={6}
+                    required
+                  />
+                </Field>
+              )}
+              <ErrorNote>{error}</ErrorNote>
+              <Button type="submit" size="lg" block loading={busy === "email"} disabled={!!busy}>
+                {mode === "signin" ? "Sign in" : mode === "signup" ? "Create account" : "Send reset link"}
+              </Button>
+            </form>
+
+            <div className="mt-6 space-y-3 text-center text-sm text-bark-soft">
+              {mode === "signin" && (
+                <>
+                  <button className="font-semibold text-moss" onClick={() => setMode("reset")}>
+                    Forgot password?
+                  </button>
+                  <p>
+                    New here?{" "}
+                    <button className="font-semibold text-moss" onClick={() => setMode("signup")}>
+                      Create an account
+                    </button>
+                  </p>
+                </>
+              )}
+              {mode !== "signin" && (
+                <p>
+                  Already have an account?{" "}
+                  <button className="font-semibold text-moss" onClick={() => setMode("signin")}>
+                    Sign in
+                  </button>
+                </p>
+              )}
             </div>
           </>
         )}
-
-        <form onSubmit={submit} className="space-y-4">
-          {mode === "signup" && (
-            <Field label="Your name">
-              <Input value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" required />
-            </Field>
-          )}
-          <Field label="Email">
-            <Input
-              type="email"
-              inputMode="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              autoComplete="email"
-              required
-            />
-          </Field>
-          {mode !== "reset" && (
-            <Field label="Password" hint={mode === "signup" ? "At least 6 characters." : undefined}>
-              <Input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete={mode === "signup" ? "new-password" : "current-password"}
-                minLength={6}
-                required
-              />
-            </Field>
-          )}
-          <ErrorNote>{error}</ErrorNote>
-          <Button type="submit" size="lg" block loading={busy === "email"} disabled={!!busy}>
-            {mode === "signin" ? "Sign in" : mode === "signup" ? "Create account" : "Send reset link"}
-          </Button>
-        </form>
-
-        <div className="mt-6 space-y-3 text-center text-sm text-bark-soft">
-          {mode === "signin" && (
-            <>
-              <button className="font-semibold text-moss" onClick={() => setMode("reset")}>
-                Forgot password?
-              </button>
-              <p>
-                New here?{" "}
-                <button className="font-semibold text-moss" onClick={() => setMode("signup")}>
-                  Create an account
-                </button>
-              </p>
-            </>
-          )}
-          {mode !== "signin" && (
-            <p>
-              Already have an account?{" "}
-              <button className="font-semibold text-moss" onClick={() => setMode("signin")}>
-                Sign in
-              </button>
-            </p>
-          )}
-        </div>
       </main>
     </div>
   );

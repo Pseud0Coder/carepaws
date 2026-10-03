@@ -10,10 +10,12 @@
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { initializeApp } from "firebase-admin/app";
-import { FieldValue, getFirestore } from "firebase-admin/firestore";
+import { FieldValue, Timestamp, getFirestore } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
 import { setGlobalOptions } from "firebase-functions/v2";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { onDocumentUpdated, onDocumentWritten } from "firebase-functions/v2/firestore";
+import { onSchedule } from "firebase-functions/v2/scheduler";
 import { defineSecret } from "firebase-functions/params";
 import Razorpay from "razorpay";
 
@@ -192,5 +194,34 @@ export const onOrgUpdated = onDocumentUpdated("users/{uid}", async (event) => {
         .forEach((d) => batch.update(d.ref, { orgName: after.displayName, orgPhoto: after.photoURL ?? null }));
       await batch.commit();
     }
+  }
+});
+
+/**
+ * Data minimisation for identity verification: ID images and personal details are deleted
+ * RETENTION_DAYS after a decision. Only the outcome and an audit trail are kept.
+ */
+const KYC_RETENTION_DAYS = 30;
+
+export const purgeKycImages = onSchedule({ schedule: "every day 03:30", timeZone: "Asia/Kolkata" }, async () => {
+  const cutoff = Timestamp.fromMillis(Date.now() - KYC_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const decided = await db.collection("kyc").where("reviewedAt", "<", cutoff).get();
+  for (const d of decided.docs) {
+    if (d.get("purgedAt")) continue;
+    await getStorage().bucket().deleteFiles({ prefix: `kyc/${d.id}/` });
+    await d.ref.update({
+      idFront: FieldValue.delete(),
+      idBack: FieldValue.delete(),
+      selfie: FieldValue.delete(),
+      addressProof: FieldValue.delete(),
+      policeCert: FieldValue.delete(),
+      dob: FieldValue.delete(),
+      addressLine: FieldValue.delete(),
+      city: FieldValue.delete(),
+      pincode: FieldValue.delete(),
+      emergencyName: FieldValue.delete(),
+      emergencyPhone: FieldValue.delete(),
+      purgedAt: FieldValue.serverTimestamp(),
+    });
   }
 });

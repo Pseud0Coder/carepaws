@@ -21,6 +21,12 @@ const config: CapacitorConfig = {
       backgroundColor: "#f3eee5",
       overlaysWebView: false,
     },
+    FirebaseAuthentication: {
+      // The native layer only sends the SMS; sign-in itself happens in the JS SDK so
+      // Firestore sees a single signed-in user.
+      skipNativeAuth: true,
+      providers: ["phone"],
+    },
     SocialLogin: {
       providers: { google: true, facebook: false, apple: false, twitter: false },
     },

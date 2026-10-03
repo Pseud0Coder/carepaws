@@ -8,6 +8,7 @@ import { createPost, getPosts } from "@/lib/db";
 import { useLikeToggle } from "@/lib/useLikeToggle";
 import type { CommunityPost, PostCategory } from "@/lib/types";
 import PostCard, { CATEGORY_META } from "@/components/PostCard";
+import UpgradeSheet from "@/components/UpgradeSheet";
 import { AppBar, Button, Chip, EmptyState, ErrorNote, Field, IconButton, Input, Sheet, Skeleton, TextArea, useToast } from "@/components/ui";
 
 const FILTERS: (PostCategory | "all")[] = ["all", "tip", "question", "story"];
@@ -19,6 +20,9 @@ export default function CommunityPage() {
   const [filter, setFilter] = useState<PostCategory | "all">("all");
   const [posts, setPosts] = useState<CommunityPost[] | null>(null);
   const [composing, setComposing] = useState(false);
+  const [upgrade, setUpgrade] = useState(false);
+  // Posting needs a role; people just looking around are asked to finish setup first.
+  const startPost = () => (profile?.role === "explorer" ? setUpgrade(true) : setComposing(true));
   const [draft, setDraft] = useState({ category: "tip" as PostCategory, title: "", text: "" });
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState("");
@@ -57,7 +61,7 @@ export default function CommunityPage() {
       <AppBar
         title="The Circle"
         action={
-          <IconButton label="Write a post" onClick={() => (profile ? setComposing(true) : router.push("/auth/?next=/community/"))}>
+          <IconButton label="Write a post" onClick={() => (profile ? startPost() : router.push("/auth/?next=/community/"))}>
             <PenLine className="h-5 w-5" />
           </IconButton>
         }
@@ -79,7 +83,7 @@ export default function CommunityPage() {
               icon={<UsersRound className="h-7 w-7" />}
               title="Quiet here so far"
               body="Start the conversation: share a tip or ask a question."
-              action={profile && <Button onClick={() => setComposing(true)}>Write a post</Button>}
+              action={profile && <Button onClick={startPost}>Write a post</Button>}
             />
           ) : (
             posts.map((p) => <PostCard key={p.id} post={p} uid={profile?.uid} onLike={like} />)
@@ -87,6 +91,7 @@ export default function CommunityPage() {
         </div>
       </main>
 
+      <UpgradeSheet open={upgrade} onClose={() => setUpgrade(false)} reason="post in the Circle" />
       <Sheet open={composing} onClose={() => setComposing(false)} title="New post">
         <div className="space-y-4">
           <div className="flex gap-2">

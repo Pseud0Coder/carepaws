@@ -1,5 +1,6 @@
 export type OrgRole = "rescue" | "vet";
-export type Role = "parent" | "sitter" | OrgRole;
+/** "explorer" is someone just looking around: no profile setup, read-only until they choose a role. */
+export type Role = "parent" | "sitter" | "explorer" | OrgRole;
 
 /** Public profile at users/{uid}. Contact details live in users/{uid}/private/contact. */
 export interface UserProfile {
@@ -19,6 +20,8 @@ export interface UserProfile {
   experience?: string;
   availability?: string[];
   responseTime?: string;
+  /** Public household details parents use to choose a sitter. */
+  home?: SitterHome;
 
   // Rescue / vet listings. Unlike people, organisations publish a phone number
   // on purpose, so it lives on the public profile.
@@ -38,6 +41,19 @@ export interface UserProfile {
   reviewCount?: number;
   completedStays?: number;
   vouchCount?: number;
+  /** Sitter has a police clearance certificate that an admin has checked. */
+  backgroundChecked?: boolean;
+}
+
+export interface SitterHome {
+  type: "apartment" | "house" | "farm";
+  fencedYard: boolean;
+  hasOwnPets: boolean;
+  ownPets: string;
+  children: boolean;
+  smokeFree: boolean;
+  /** Longest a pet is ever left alone, in hours. */
+  maxHoursAlone: number;
 }
 
 export type SitterProfile = UserProfile & {
@@ -170,4 +186,33 @@ export interface CommunityComment {
   authorPhoto: string | null;
   text: string;
   createdAt?: string;
+}
+
+export type KycStatus = "submitted" | "approved" | "rejected";
+export type KycIdType = "aadhaar" | "pan" | "passport" | "driving_licence" | "voter_id";
+
+/**
+ * A sitter's identity verification case at kyc/{uid}. Only the owner can read it, and the ID images
+ * (in private Storage) can never be read by clients. Status moves past "submitted" only by an admin.
+ */
+export interface KycCase {
+  status: KycStatus;
+  legalName: string;
+  dob: string;
+  idType: KycIdType;
+  /** Last four characters only. Full ID numbers are never collected. */
+  idLast4: string;
+  addressLine: string;
+  city: string;
+  pincode: string;
+  emergencyName: string;
+  emergencyPhone: string;
+  hasPoliceCert: boolean;
+  submittedAt?: string;
+  reviewedAt?: string;
+  /** Why a case was rejected; shown to the sitter so they can fix it. */
+  reason?: string;
+  backgroundChecked?: boolean;
+  /** Set when the raw ID images were deleted after the retention window. */
+  purgedAt?: string;
 }

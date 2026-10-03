@@ -9,5 +9,20 @@ service firebase.storage {
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
     }
+
+    // Identity documents. WRITE-ONLY for the owner: no client can ever read them back.
+    // Admins review them with the Admin SDK (which bypasses these rules). Uploads are
+    // allowed only before a case exists or after it was rejected, so approved documents
+    // can't be swapped out afterwards.
+    match /kyc/{userId}/{file} {
+      allow read: if false;
+      allow write: if request.auth != null
+        && request.auth.uid == userId
+        && file.matches('^(id-front|id-back|selfie|address-proof|police-cert)\\.(jpg|pdf)$')
+        && request.resource.size < 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/jpeg|application/pdf')
+        && (!firestore.exists(/databases/(default)/documents/kyc/$(userId))
+            || firestore.get(/databases/(default)/documents/kyc/$(userId)).data.status == 'rejected');
+    }
   }
 }

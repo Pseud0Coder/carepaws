@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import {
   Camera,
+  Compass,
   ChevronRight,
   Eye,
   ShieldCheck,
@@ -28,7 +29,9 @@ import { getThemePref, setThemePref, type ThemePref } from "@/lib/theme";
 import { cn } from "@/lib/cn";
 import Avatar from "@/components/Avatar";
 import Footer from "@/components/Footer";
+import KycStatusCard from "@/components/KycStatusCard";
 import { orgHref } from "@/components/OrgCard";
+import UpgradeSheet from "@/components/UpgradeSheet";
 import OrgSettingsForm from "@/components/OrgSettingsForm";
 import PetForm from "@/components/PetForm";
 import RequireAuth from "@/components/RequireAuth";
@@ -180,6 +183,26 @@ function Earnings({ uid }: { uid: string }) {
           ))}
         </ul>
       )}
+    </section>
+  );
+}
+
+function ExplorerPanel() {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="px-5 pt-6">
+      <div className="rounded-[var(--radius-card)] bg-honey-tint p-5">
+        <p className="flex items-center gap-2 font-semibold text-bark">
+          <Compass className="h-5 w-5 text-honey" /> You’re just looking around
+        </p>
+        <p className="mt-1 text-sm text-bark-soft">
+          Browse sitters, rescues and vets freely. To book, message or post, set up your profile. It takes a couple of minutes.
+        </p>
+        <Button className="mt-4" onClick={() => setOpen(true)}>
+          Set up my profile
+        </Button>
+      </div>
+      <UpgradeSheet open={open} onClose={() => setOpen(false)} reason="get started" />
     </section>
   );
 }
@@ -393,7 +416,13 @@ function You({ profile }: { profile: UserProfile }) {
         </p>
       </section>
 
-      {org ? <OrgPanel profile={profile} /> : isSitter ? <Earnings uid={profile.uid} /> : <Pets uid={profile.uid} />}
+      {isSitter && (
+        <section className="px-5 pt-6">
+          <KycStatusCard uid={profile.uid} verified={profile.verified} backgroundChecked={profile.backgroundChecked} />
+        </section>
+      )}
+
+      {org ? <OrgPanel profile={profile} /> : profile.role === "explorer" ? <ExplorerPanel /> : isSitter ? <Earnings uid={profile.uid} /> : <Pets uid={profile.uid} />}
 
       <section className="px-5 pt-7">
         <SectionTitle>Account</SectionTitle>

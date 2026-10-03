@@ -7,11 +7,12 @@ import { BadgeCheck, Clock, MapPin, MessageCircle, Reply, ShieldCheck, ThumbsUp,
 import { useAuth } from "@/lib/auth-context";
 import { getReviews, getSitter, getVouchesForSitter, openConversation, respondToReview, toggleReviewHelpful } from "@/lib/db";
 import type { Review, SitterProfile, Vouch } from "@/lib/types";
-import { PET_EMOJI, WEEKDAYS } from "@/lib/constants";
+import { HOME_TYPES, PET_EMOJI, WEEKDAYS } from "@/lib/constants";
 import { formatINR, timeAgo } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import Avatar from "@/components/Avatar";
 import StarRating from "@/components/StarRating";
+import UpgradeSheet from "@/components/UpgradeSheet";
 import VouchSection from "@/components/VouchSection";
 import { AppBar, Button, EmptyState, FullScreenLoader, Tag, TextArea, useToast } from "@/components/ui";
 
@@ -95,13 +96,14 @@ function ReviewItem({ review, sitterId, onChange }: { review: Review; sitterId: 
 
 function SitterProfileScreen() {
   const id = useSearchParams().get("id") || "";
-  const { profile } = useAuth();
+  const { profile, loading } = useAuth();
   const router = useRouter();
   const toast = useToast();
   const [sitter, setSitter] = useState<SitterProfile | null | undefined>(undefined);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [vouches, setVouches] = useState<Vouch[]>([]);
   const [opening, setOpening] = useState(false);
+  const [upgrade, setUpgrade] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -110,8 +112,9 @@ function SitterProfileScreen() {
     getVouchesForSitter(id).then(setVouches).catch(() => {});
   }, [id]);
 
-  if (id && sitter === undefined) return <FullScreenLoader />;
-  if (!sitter)
+  if ((id && sitter === undefined) || loading) return <FullScreenLoader />;
+  // A sitter is public only once their identity verification is approved (they can always see themselves).
+  if (!sitter || (!sitter.verified && profile?.uid !== sitter.uid))
     return (
       <>
         <AppBar back />
@@ -120,10 +123,11 @@ function SitterProfileScreen() {
     );
 
   const isSelf = profile?.uid === sitter.uid;
-  const canBook = !profile || profile.role === "parent";
+  const canBook = !profile || profile.role === "parent" || profile.role === "explorer";
 
   async function message() {
     if (!profile) return router.push(`/auth/?next=${encodeURIComponent(`/sitters/profile/?id=${id}`)}`);
+    if (profile.role === "explorer") return setUpgrade(true);
     if (profile.role !== "parent") return toast("Only pet parents can message sitters.");
     setOpening(true);
     try {
@@ -151,7 +155,8 @@ function SitterProfileScreen() {
           </p>
           <div className="mt-3 flex flex-wrap justify-center gap-1.5">
             {sitter.topRated && <Tag tone="moss">Top rated</Tag>}
-            {sitter.verified ? <Tag tone="river">ID verified</Tag> : <Tag>Not yet verified</Tag>}
+            {sitter.verified ? <Tag tone="river">ID verified</Tag> : <Tag tone="honey">Verification pending</Tag>}
+            {sitter.backgroundChecked && <Tag tone="moss">Background checked</Tag>}
             {vouches.length > 0 && (
               <Tag tone="clay">
                 <ShieldCheck className="h-3 w-3" /> Vouched by {vouches.length}
@@ -166,12 +171,40 @@ function SitterProfileScreen() {
           <Stat value={String(sitter.completedStays ?? 0)} label="stays done" />
         </section>
 
+        {isSelf && !sitter.verified && (
+          <p className="mx-5 mt-5 rounded-2xl bg-honey-tint px-4 py-3 text-sm text-bark-soft">
+            This is how your profile will look. It isn’t visible to others until your identity verification is approved.
+          </p>
+        )}
+
         <VouchSection sitter={sitter} vouches={vouches} onChange={setVouches} />
 
         {sitter.bio && (
           <section className="px-5 pt-7">
             <h2 className="mb-2 font-display text-lg text-bark">About</h2>
             <p className="leading-relaxed text-bark-soft">{sitter.bio}</p>
+          </section>
+        )}
+
+        {sitter.home && (
+          <section className="px-5 pt-7">
+            <h2 className="mb-3 font-display text-lg text-bark">Home &amp; household</h2>
+            <div className="flex flex-wrap gap-2">
+              {[
+                HOME_TYPES.find((t) => t.id === sitter.home!.type)?.label,
+                sitter.home.fencedYard ? "Secure fenced yard" : null,
+                sitter.home.smokeFree ? "Smoke-free" : "Smoking household",
+                sitter.home.children ? "Children at home" : "No children at home",
+                sitter.home.hasOwnPets ? `Own pets: ${sitter.home.ownPets || "yes"}` : "No other pets",
+                sitter.home.maxHoursAlone === 0 ? "Never leaves pets alone" : `Pets alone up to ${sitter.home.maxHoursAlone}h`,
+              ]
+                .filter(Boolean)
+                .map((t) => (
+                  <span key={t} className="rounded-full bg-paper px-3 py-2 text-sm font-medium text-bark shadow-soft">
+                    {t}
+                  </span>
+                ))}
+            </div>
           </section>
         )}
 
@@ -236,6 +269,7 @@ function SitterProfileScreen() {
         </section>
       </main>
 
+      <UpgradeSheet open={upgrade} onClose={() => setUpgrade(false)} reason="message a sitter" only="parent" />
       <div className="pb-safe fixed inset-x-0 bottom-0 z-30 border-t border-oat-deep/60 bg-paper/95 backdrop-blur-md">
         <div className="mx-auto flex max-w-lg items-center gap-3 px-5 py-3">
           <div className="flex-1">

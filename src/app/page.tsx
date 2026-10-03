@@ -24,8 +24,8 @@ export default function Discover() {
   }, []);
 
   useEffect(() => {
-    // Rescues and clinics have no bookings.
-    if (!profile?.role || isOrgRole(profile.role)) return;
+    // Only parents and sitters have bookings.
+    if (profile?.role !== "parent" && profile?.role !== "sitter") return;
     const field = profile.role === "sitter" ? "sitterId" : "parentId";
     return subscribeBookings(profile.uid, field, (all) => {
       const today = todayISO();

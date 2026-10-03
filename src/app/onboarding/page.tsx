@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Check, HeartHandshake, Home, PawPrint, Stethoscope, Warehouse } from "lucide-react";
+import { Check, Compass, HeartHandshake, Home, PawPrint, Stethoscope, Warehouse } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { addPet, getPets, updateContact } from "@/lib/db";
 import { isOrgRole, type Pet, type Role } from "@/lib/types";
@@ -10,22 +10,31 @@ import { PET_EMOJI } from "@/lib/constants";
 import { cn } from "@/lib/cn";
 import RequireAuth from "@/components/RequireAuth";
 import PetForm from "@/components/PetForm";
+import KycForm from "@/components/KycForm";
 import OrgSettingsForm from "@/components/OrgSettingsForm";
 import SitterSettingsForm from "@/components/SitterSettingsForm";
 import { Button, ErrorNote, Field, Input, TextArea, useToast } from "@/components/ui";
 
-type Step = "role" | "about" | "details";
+type Step = "role" | "about" | "details" | "verify";
 
-function Progress({ step }: { step: Step }) {
-  const i = ["role", "about", "details"].indexOf(step);
+function Progress({ step, total }: { step: Step; total: number }) {
+  const i = ["role", "about", "details", "verify"].indexOf(step);
   return (
-    <div className="flex gap-1.5" aria-label={`Step ${i + 1} of 3`}>
-      {[0, 1, 2].map((n) => (
+    <div className="flex gap-1.5" aria-label={`Step ${i + 1} of ${total}`}>
+      {Array.from({ length: total }, (_, n) => (
         <span key={n} className={cn("h-1.5 flex-1 rounded-full", n <= i ? "bg-moss" : "bg-oat-deep")} />
       ))}
     </div>
   );
 }
+
+const ROLE_CARDS = [
+  { role: "parent" as const, Icon: Home, title: "I have a pet", body: "Find and book trusted sitters nearby.", tone: "bg-clay-tint text-clay", org: false },
+  { role: "sitter" as const, Icon: HeartHandshake, title: "I’m a pet sitter", body: "Care for pets and earn. Identity verification required.", tone: "bg-moss-tint text-moss", org: false },
+  { role: "explorer" as const, Icon: Compass, title: "Just looking around", body: "Skip setup and browse sitters, rescues and vets.", tone: "bg-honey-tint text-honey", org: false },
+  { role: "rescue" as const, Icon: Warehouse, title: "I run a rescue or shelter", body: "List it so people nearby can call you, and vouch for sitters you trust.", tone: "bg-clay-tint text-clay", org: true },
+  { role: "vet" as const, Icon: Stethoscope, title: "I’m a vet or clinic", body: "Be found in emergencies, and vouch for sitters you trust.", tone: "bg-river-tint text-river", org: true },
+];
 
 export default function OnboardingPage() {
   return <RequireAuth message="Create an account to get started.">{() => <Onboarding />}</RequireAuth>;
@@ -37,7 +46,9 @@ function Onboarding() {
   const toast = useToast();
   const [step, setStep] = useState<Step>(profile?.role ? "about" : "role");
   const [role, setRole] = useState<Role | null>(profile?.role ?? null);
-  const [displayName, setDisplayName] = useState(profile?.displayName ?? "");
+  // Phone sign-ups get a placeholder name ("Member 1234"); ask for a real one.
+  const [displayName, setDisplayName] = useState(/^Member\b/.test(profile?.displayName ?? "") ? "" : (profile?.displayName ?? ""));
+  const [showOrgs, setShowOrgs] = useState(false);
   const [location, setLocation] = useState(profile?.location ?? "");
   const [phone, setPhone] = useState("");
   const [bio, setBio] = useState(profile?.bio ?? "");
@@ -65,9 +76,18 @@ function Onboarding() {
     setRole(r);
     setBusy(true);
     try {
+      if (r === "explorer") {
+        // "Just looking around" skips setup entirely. They can pick a role later from the You tab.
+        finishing.current = true;
+        await saveProfile({ role: "explorer", onboarded: true });
+        toast("Welcome! Set up your profile any time from the You tab.");
+        router.replace("/");
+        return;
+      }
       await saveProfile({ role: r });
       setStep("about");
     } catch (e) {
+      finishing.current = false;
       setError((e as Error).message);
     } finally {
       setBusy(false);
@@ -109,22 +129,15 @@ function Onboarding() {
   return (
     <main className="pt-safe px-6 pb-12">
       <div className="pt-6 pb-8">
-        <Progress step={step} />
+        <Progress step={step} total={role === "sitter" ? 4 : 3} />
       </div>
 
       {step === "role" && (
         <section className="animate-rise">
           <h1 className="font-display text-[30px] leading-tight text-bark">How will you use CarePaws?</h1>
-          <p className="mt-2 text-bark-soft">Pick the one that fits best. It can’t be changed later without a new account.</p>
+          <p className="mt-2 text-bark-soft">Not sure yet? Choose “Just looking around” and set up later.</p>
           <div className="mt-8 space-y-3">
-            {(
-              [
-                ["parent", Home, "I have a pet", "Find and book trusted sitters nearby."],
-                ["sitter", HeartHandshake, "I’m a sitter", "Care for pets and earn on your own schedule."],
-                ["rescue", Warehouse, "I run a rescue or shelter", "List it so people nearby can call you, and vouch for sitters you trust."],
-                ["vet", Stethoscope, "I’m a vet or clinic", "Be found in emergencies, and vouch for sitters you trust."],
-              ] as const
-            ).map(([r, Icon, title, body]) => (
+            {ROLE_CARDS.filter((c) => !c.org || showOrgs).map(({ role: r, Icon, title, body, tone }) => (
               <button
                 key={r}
                 disabled={busy}
@@ -134,12 +147,7 @@ function Onboarding() {
                   role === r ? "border-moss" : "border-oat-deep/60"
                 )}
               >
-                <span
-                  className={cn(
-                    "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl",
-                    r === "parent" || r === "rescue" ? "bg-clay-tint text-clay" : r === "vet" ? "bg-river-tint text-river" : "bg-moss-tint text-moss"
-                  )}
-                >
+                <span className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl", tone)}>
                   <Icon className="h-6 w-6" />
                 </span>
                 <span>
@@ -149,6 +157,11 @@ function Onboarding() {
               </button>
             ))}
           </div>
+          {!showOrgs && (
+            <button onClick={() => setShowOrgs(true)} className="mt-5 w-full text-center text-sm font-semibold text-moss">
+              I run a rescue, shelter or vet clinic →
+            </button>
+          )}
           <div className="mt-4">
             <ErrorNote>{error}</ErrorNote>
           </div>
@@ -231,14 +244,34 @@ function Onboarding() {
           <p className="mt-2 mb-6 text-bark-soft">You can change any of this later from your profile.</p>
           <SitterSettingsForm
             initial={profile ?? {}}
-            submitLabel="Publish my profile"
+            submitLabel="Next: verify your identity"
             onSubmit={async (s) => {
+              // Not live yet: a sitter is listed only after identity verification is approved.
+              await saveProfile(s);
+              setStep("verify");
+            }}
+          />
+        </section>
+      )}
+
+      {step === "verify" && role === "sitter" && user && (
+        <section className="animate-rise">
+          <h1 className="font-display text-[30px] leading-tight text-bark">Verify your identity</h1>
+          <p className="mt-2 mb-6 text-bark-soft">
+            Every sitter is checked before they’re listed. It takes about five minutes, and we review it within 1–2 working days.
+          </p>
+          <KycForm
+            uid={user.uid}
+            initialName={profile?.displayName}
+            onSubmitted={async () => {
               finishing.current = true;
-              await saveProfile({ ...s, onboarded: true }).catch((e) => {
+              try {
+                await saveProfile({ onboarded: true });
+              } catch (e) {
                 finishing.current = false;
                 throw e;
-              });
-              toast("Your profile is live.");
+              }
+              toast("Submitted. We’ll review it within 1–2 working days.");
               router.replace("/dashboard/");
             }}
           />

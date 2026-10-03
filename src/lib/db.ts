@@ -34,6 +34,8 @@ import type {
   CommunityComment,
   CommunityPost,
   Conversation,
+  KycCase,
+  KycIdType,
   OrgProfile,
   OrgRole,
   Message,
@@ -72,12 +74,15 @@ export async function ensureProfile(user: {
   displayName: string | null;
   photoURL: string | null;
   email: string | null;
+  phoneNumber?: string | null;
 }): Promise<UserProfile> {
   const existing = await getProfile(user.uid);
   if (existing) return existing;
   const profile = {
     uid: user.uid,
-    displayName: user.displayName || user.email?.split("@")[0] || "Friend",
+    // Phone sign-ups have no name yet; onboarding asks for one.
+    displayName:
+      user.displayName || user.email?.split("@")[0] || (user.phoneNumber ? `Member ${user.phoneNumber.slice(-4)}` : "Member"),
     photoURL: user.photoURL,
     role: null,
     onboarded: false,
@@ -86,7 +91,10 @@ export async function ensureProfile(user: {
   };
   const batch = writeBatch(db());
   batch.set(doc(db(), "users", user.uid), profile);
-  batch.set(doc(db(), "users", user.uid, "private", "contact"), { email: user.email || "" });
+  batch.set(doc(db(), "users", user.uid, "private", "contact"), {
+    email: user.email || "",
+    ...(user.phoneNumber ? { phone: user.phoneNumber } : {}),
+  });
   await batch.commit();
   return { ...profile, createdAt: new Date().toISOString() } as UserProfile;
 }
@@ -105,6 +113,7 @@ export type EditableProfile = Pick<
   | "experience"
   | "availability"
   | "responseTime"
+  | "home"
   | "phone"
   | "address"
   | "lat"
@@ -137,10 +146,12 @@ export interface SitterFilters {
 }
 
 export async function getSitters(filters: SitterFilters = {}): Promise<SitterProfile[]> {
+  // Only sitters whose identity verification was approved are listed.
   const q = query(
     collection(db(), "users"),
     where("role", "==", "sitter"),
-    where("onboarded", "==", true)
+    where("onboarded", "==", true),
+    where("verified", "==", true)
   );
   const snap = await getDocs(q);
   let sitters = snap.docs.map((d) => ({ ...normalize(d.data()), uid: d.id }) as SitterProfile);
@@ -171,6 +182,75 @@ export async function getSitters(filters: SitterFilters = {}): Promise<SitterPro
 export async function getSitter(uid: string): Promise<SitterProfile | null> {
   const p = await getProfile(uid);
   return p && p.role === "sitter" ? (p as SitterProfile) : null;
+}
+
+// ─── Sitter identity verification (KYC) ────────────────────────────────────
+
+export async function getKyc(uid: string): Promise<KycCase | null> {
+  const snap = await getDoc(doc(db(), "kyc", uid));
+  return snap.exists() ? (normalize(snap.data()) as KycCase) : null;
+}
+
+export interface KycInput {
+  legalName: string;
+  dob: string;
+  idType: KycIdType;
+  idLast4: string;
+  addressLine: string;
+  city: string;
+  pincode: string;
+  emergencyName: string;
+  emergencyPhone: string;
+}
+
+export interface KycFiles {
+  idFront: Blob;
+  idBack?: Blob;
+  selfie: Blob;
+  addressProof?: Blob;
+  policeCert?: Blob;
+}
+
+/**
+ * Uploads the documents to private Storage (write-only for the owner), then records the case.
+ * `onProgress` is called with a 0..1 fraction. The case is created last, so a failed
+ * upload leaves nothing half-submitted.
+ */
+export async function submitKyc(
+  uid: string,
+  input: KycInput,
+  files: KycFiles,
+  declarations: Record<string, true>,
+  declarationsVersion: number,
+  onProgress?: (fraction: number) => void
+) {
+  const entries = Object.entries(files).filter(([, blob]) => !!blob) as [keyof KycFiles, Blob][];
+  const fileName: Record<keyof KycFiles, string> = {
+    idFront: "id-front",
+    idBack: "id-back",
+    selfie: "selfie",
+    addressProof: "address-proof",
+    policeCert: "police-cert",
+  };
+  const paths: Partial<Record<keyof KycFiles, string>> = {};
+  let done = 0;
+  for (const [key, blob] of entries) {
+    const ext = blob.type === "application/pdf" ? "pdf" : "jpg";
+    const path = `kyc/${uid}/${fileName[key]}.${ext}`;
+    await uploadBytes(ref(storage(), path), blob, { contentType: blob.type === "application/pdf" ? "application/pdf" : "image/jpeg" });
+    paths[key] = path;
+    onProgress?.(++done / entries.length);
+  }
+  await setDoc(doc(db(), "kyc", uid), {
+    status: "submitted",
+    ...input,
+    ...paths,
+    hasPoliceCert: !!paths.policeCert,
+    declarations: { version: declarationsVersion, ...declarations },
+    consent: true,
+    consentAt: serverTimestamp(),
+    submittedAt: serverTimestamp(),
+  });
 }
 
 // ─── Rescues & vets ────────────────────────────────────────────────────────
