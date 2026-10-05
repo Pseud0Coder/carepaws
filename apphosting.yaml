@@ -1,4 +1,0 @@
-runConfig:
-  runCommand: npm run start
-  buildCommand: npm run build
-  outputDirectory: .next
