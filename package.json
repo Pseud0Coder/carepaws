@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "emulators": "firebase emulators:start --only auth,firestore,storage,functions --project demo-carepaws",
     "seed:emulator": "FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 node functions/seed.mjs --project demo-carepaws",
-    "test:rules": "firebase emulators:exec --only firestore,storage --project demo-carepaws \"node --test tests/\"",
+    "test:rules": "firebase emulators:exec --only firestore,storage --project demo-carepaws \"node --test tests/*.test.mjs\"",
     "android:sync": "next build && cap sync android",
     "android:open": "cap open android",
     "android:apk": "npm run android:sync && cd android && ./gradlew assembleDebug",
