@@ -3,14 +3,19 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Check, Compass, HeartHandshake, Home, PawPrint, Stethoscope, Warehouse } from "lucide-react";
+import { Check, CheckCircle2, Compass, HeartHandshake, Home, MapPin, PawPrint, Smartphone, Stethoscope, Warehouse } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { addPet, getPets, updateContact } from "@/lib/db";
-import { isOrgRole, type Pet, type Role } from "@/lib/types";
+import { addPet, getPets, updateContact, uploadAvatar } from "@/lib/db";
+import { compressImage } from "@/lib/images";
+import { HYD_CITY, isHydArea, locationLabel } from "@/lib/hyderabad";
+import { isOrgRole, type Pet, type Role, type UserProfile } from "@/lib/types";
 import { PET_EMOJI } from "@/lib/constants";
 import { cn } from "@/lib/cn";
 import RequireAuth from "@/components/RequireAuth";
+import AreaSelect from "@/components/AreaSelect";
 import PetForm from "@/components/PetForm";
+import PhoneOtp from "@/components/PhoneOtp";
+import PhotoField from "@/components/PhotoField";
 import KycForm from "@/components/KycForm";
 import OrgSettingsForm from "@/components/OrgSettingsForm";
 import SitterSettingsForm from "@/components/SitterSettingsForm";
@@ -37,22 +42,33 @@ const ROLE_CARDS = [
   { role: "vet" as const, Icon: Stethoscope, title: "I’m a vet or clinic", body: "Be found in emergencies, and vouch for sitters you trust.", tone: "bg-river-tint text-river", org: true },
 ];
 
+/** Where to pick up if someone closed the app part-way through, so they never re-answer what's saved. */
+function initialStep(p: UserProfile | null): Step {
+  if (!p?.role || p.role === "explorer") return "role";
+  if (!isHydArea(p.area)) return "about";
+  if (p.role === "sitter" && typeof p.pricePerNight === "number") return "verify";
+  return "details";
+}
+
+/** A photo from a Google account is not a deliberate profile photo; sitters add their own. */
+const hasOwnPhoto = (url: string | null | undefined) => !!url && !/googleusercontent\.com/.test(url);
+
 export default function OnboardingPage() {
   return <RequireAuth message="Create an account to get started.">{() => <Onboarding />}</RequireAuth>;
 }
 
 function Onboarding() {
-  const { profile, user, saveProfile } = useAuth();
+  const { profile, user, saveProfile, phoneNumber, refreshUser } = useAuth();
   const router = useRouter();
   const toast = useToast();
-  const [step, setStep] = useState<Step>(profile?.role ? "about" : "role");
-  const [role, setRole] = useState<Role | null>(profile?.role ?? null);
+  const [step, setStep] = useState<Step>(() => initialStep(profile));
+  const [role, setRole] = useState<Role | null>(profile?.role && profile.role !== "explorer" ? profile.role : null);
   // Phone sign-ups get a placeholder name ("Member 1234"); ask for a real one.
   const [displayName, setDisplayName] = useState(/^Member\b/.test(profile?.displayName ?? "") ? "" : (profile?.displayName ?? ""));
   const [showOrgs, setShowOrgs] = useState(false);
   const [agreed, setAgreed] = useState(false);
-  const [location, setLocation] = useState(profile?.location ?? "");
-  const [phone, setPhone] = useState("");
+  const [area, setArea] = useState(isHydArea(profile?.area) ? (profile?.area ?? "") : "");
+  const [photo, setPhoto] = useState<File | null>(null);
   const [bio, setBio] = useState(profile?.bio ?? "");
   const [pets, setPets] = useState<Pet[]>([]);
   const [addingPet, setAddingPet] = useState(true);
@@ -77,6 +93,7 @@ function Onboarding() {
   async function chooseRole(r: Role) {
     setRole(r);
     setBusy(true);
+    setError("");
     try {
       if (r === "explorer") {
         // "Just looking around" skips setup entirely. They can pick a role later from the You tab.
@@ -99,17 +116,36 @@ function Onboarding() {
   async function saveAbout(e: FormEvent) {
     e.preventDefault();
     if (!user) return;
-    setBusy(true);
     setError("");
+    const name = displayName.trim();
+    const needsPerson = !isOrgRole(role);
+    if (name.length < 2) return setError(isOrgRole(role) ? "Enter your organisation’s name." : "Enter your name.");
+    if (!isHydArea(area)) return setError("Choose your neighbourhood in Hyderabad.");
+    if (role === "sitter") {
+      if (bio.trim().length < 30) return setError("Tell parents a little about yourself and your home (at least a couple of sentences).");
+      if (!photo && !hasOwnPhoto(profile?.photoURL)) return setError("Add a clear photo of your face. Pet parents choose sitters they can see.");
+    }
+    if (needsPerson && !phoneNumber) return setError("Verify your mobile number first.");
+    setBusy(true);
     try {
-      await saveProfile({ displayName: displayName.trim(), location: location.trim(), bio: bio.trim() });
+      let photoURL: string | undefined;
+      if (photo) photoURL = await uploadAvatar(user.uid, await compressImage(photo, 800, 0.85));
+      await saveProfile({
+        displayName: name,
+        area,
+        location: locationLabel(area),
+        bio: bio.trim(),
+        ...(photoURL ? { photoURL } : {}),
+      });
       // A private record that they're an adult and accepted the terms (DPDP treats under-18s specially).
-      await updateContact(user.uid, { terms: { version: 1, over18: true, at: new Date().toISOString() } });
-      // People keep their phone private; organisations publish theirs on the listing form.
-      if (!isOrgRole(role) && phone.trim()) await updateContact(user.uid, { phone: phone.trim() });
+      await updateContact(user.uid, {
+        terms: { version: 1, over18: true, at: new Date().toISOString() },
+        // The number they just verified. Never shown on their public profile.
+        ...(needsPerson && phoneNumber ? { phone: phoneNumber } : {}),
+      });
       setStep("details");
-    } catch (e) {
-      setError((e as Error).message);
+    } catch (err) {
+      setError((err as Error).message || "Couldn’t save that. Please try again.");
     } finally {
       setBusy(false);
     }
@@ -117,6 +153,7 @@ function Onboarding() {
 
   async function finish() {
     setBusy(true);
+    setError("");
     finishing.current = true;
     try {
       await saveProfile({ onboarded: true });
@@ -124,11 +161,13 @@ function Onboarding() {
       router.replace(role === "sitter" ? "/dashboard/" : "/");
     } catch (e) {
       finishing.current = false;
-      throw e;
+      setError((e as Error).message || "Couldn’t finish. Please try again.");
     } finally {
       setBusy(false);
     }
   }
+
+  const person = !isOrgRole(role);
 
   return (
     <main className="pt-safe px-6 pb-12">
@@ -166,13 +205,42 @@ function Onboarding() {
               I run a rescue, shelter or vet clinic →
             </button>
           )}
+          <p className="mt-6 flex items-start gap-2 text-sm text-bark-soft">
+            <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-moss" />
+            CarePaws is launching in {HYD_CITY} first. Elsewhere? You can still look around.
+          </p>
           <div className="mt-4">
             <ErrorNote>{error}</ErrorNote>
           </div>
         </section>
       )}
 
-      {step === "about" && (
+      {step === "about" && person && !phoneNumber && user && (
+        <section className="animate-rise space-y-5">
+          <div>
+            <h1 className="font-display text-[30px] leading-tight text-bark">Verify your mobile number</h1>
+            <p className="mt-2 text-bark-soft">
+              Every CarePaws account belongs to a real person. {role === "sitter" ? "Pet parents and CarePaws reach you on this number during a stay." : "Sitters and CarePaws can reach you on this number during a stay."} It is never shown on your profile.
+            </p>
+          </div>
+          <div className="flex gap-3 rounded-2xl bg-oat/60 p-4 text-sm text-bark-soft">
+            <Smartphone className="h-5 w-5 shrink-0 text-moss" />
+            <p>We’ll text a 6-digit code to an Indian mobile number. Each number can be used on one account.</p>
+          </div>
+          <PhoneOtp
+            mode="link"
+            submitLabel="Verify number"
+            onDone={async () => {
+              await refreshUser();
+            }}
+          />
+          <Button type="button" variant="ghost" block onClick={() => setStep("role")}>
+            Back
+          </Button>
+        </section>
+      )}
+
+      {step === "about" && (!person || phoneNumber) && (
         <form onSubmit={saveAbout} className="animate-rise space-y-4">
           <h1 className="font-display text-[30px] leading-tight text-bark">{isOrgRole(role) ? "About your organisation" : "A little about you"}</h1>
           <p className="!mt-2 text-bark-soft">
@@ -182,18 +250,30 @@ function Onboarding() {
                 ? "Pet parents read this before they book."
                 : "Sitters see this when you request a stay."}
           </p>
-          <Field label={isOrgRole(role) ? "Organisation name" : "Name"}>
-            <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} required minLength={2} maxLength={60} />
-          </Field>
-          <Field label="Neighbourhood, city">
-            <Input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Indiranagar, Bengaluru" required maxLength={80} />
-          </Field>
-          {!isOrgRole(role) && (
-            <Field label="Phone (private)" hint="Only you can see this. We never show it on your profile.">
-              <Input type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="tel" maxLength={20} />
-            </Field>
+          {person && phoneNumber && (
+            <div className="flex items-center gap-2 rounded-2xl bg-moss-tint px-4 py-3 text-sm font-semibold text-moss">
+              <CheckCircle2 className="h-5 w-5" /> {phoneNumber} verified
+            </div>
           )}
-          <Field label={isOrgRole(role) ? "About" : "Bio"}>
+          {role === "sitter" && (
+            <PhotoField
+              label="Your photo"
+              file={photo}
+              onChange={setPhoto}
+              accept="image/*"
+              hint={hasOwnPhoto(profile?.photoURL) ? "You already added one. Choose another to replace it." : "A clear photo of your face. Parents see it on your profile."}
+            />
+          )}
+          <Field label={isOrgRole(role) ? "Organisation name" : "Name"}>
+            <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} required minLength={2} maxLength={60} autoComplete="name" />
+          </Field>
+          <AreaSelect
+            value={area}
+            onChange={setArea}
+            label={isOrgRole(role) ? "Neighbourhood in Hyderabad" : "Your neighbourhood in Hyderabad"}
+            hint={isOrgRole(role) ? "Shown on your listing. You’ll add the full address next." : undefined}
+          />
+          <Field label={isOrgRole(role) ? "About" : role === "sitter" ? "About you and your home" : "About your household (optional)"}>
             <TextArea
               value={bio}
               onChange={(e) => setBio(e.target.value)}
@@ -333,7 +413,10 @@ function Onboarding() {
               <PawPrint className="h-4 w-4" /> Add another pet
             </Button>
           )}
-          <div className="mt-8 flex gap-3">
+          <div className="mt-4">
+            <ErrorNote>{error}</ErrorNote>
+          </div>
+          <div className="mt-4 flex gap-3">
             <Button variant="ghost" onClick={finish} disabled={busy} className="flex-1">
               Skip for now
             </Button>

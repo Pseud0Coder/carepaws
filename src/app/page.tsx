@@ -163,7 +163,7 @@ export default function Discover() {
               </Link>
             }
           >
-            Loved by pet parents
+            Verified sitters in Hyderabad
           </SectionTitle>
         </div>
         <div className="no-scrollbar flex gap-3 overflow-x-auto px-5 pb-2">
@@ -171,7 +171,15 @@ export default function Discover() {
             ? Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-48 w-40 shrink-0" />)
             : sitters.slice(0, 8).map((s) => <SitterTile key={s.uid} sitter={s} />)}
           {sitters?.length === 0 && (
-            <p className="py-6 text-sm text-bark-soft">No sitters yet. Check back soon.</p>
+            <div className="w-full rounded-[var(--radius-card)] border border-oat-deep/60 bg-paper p-5 shadow-soft">
+              <p className="font-semibold text-bark">Launching in Hyderabad</p>
+              <p className="mt-1 text-sm text-bark-soft">
+                Every sitter is ID-checked before they’re listed, and the first ones are being verified now. Love animals and live in Hyderabad?
+              </p>
+              <Link href={profile ? "/dashboard/" : "/auth/?mode=signup"} className="mt-3 inline-block text-sm font-semibold text-moss">
+                Become a sitter →
+              </Link>
+            </div>
           )}
         </div>
       </section>

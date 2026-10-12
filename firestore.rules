@@ -2,7 +2,7 @@ rules_version = '2';
 
 // All data access happens from the client, so these rules are the API's
 // authorization layer. Fields marked "system" are only written by Cloud
-// Functions (functions/) or the admin seed script, which bypass rules.
+// Functions (functions/) or the admin CLI (functions/admin.mjs), which bypass rules.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -22,6 +22,87 @@ service cloud.firestore {
       return timestamp.date(int(s.split('-')[0]), int(s.split('-')[1]), int(s.split('-')[2]));
     }
 
+
+    // ─── Service area: Hyderabad ──────────────────────────────────────────
+    // Generated from src/lib/hyderabad-areas.json; tests/areas.test.mjs fails if they drift apart.
+    function hydArea(a) {
+      return a is string && a in [
+        // BEGIN hyderabad-areas
+        'AS Rao Nagar',
+        'Abids',
+        'Alwal',
+        'Ameerpet',
+        'Attapur',
+        'Bachupally',
+        'Banjara Hills',
+        'Begumpet',
+        'Boduppal',
+        'Bowenpally',
+        'Chandanagar',
+        'Charminar and Old City',
+        'Dilsukhnagar',
+        'ECIL',
+        'Erragadda',
+        'Film Nagar',
+        'Financial District',
+        'Gachibowli',
+        'Golconda',
+        'HITEC City',
+        'Habsiguda',
+        'Hafeezpet',
+        'Himayatnagar',
+        'Jubilee Hills',
+        'KPHB Colony',
+        'Khairatabad',
+        'Khajaguda',
+        'Kokapet',
+        'Kompally',
+        'Kondapur',
+        'Kothapet',
+        'Kukatpally',
+        'LB Nagar',
+        'Langar Houz',
+        'Lingampally',
+        'Madhapur',
+        'Malkajgiri',
+        'Manikonda',
+        'Medchal',
+        'Mehdipatnam',
+        'Miyapur',
+        'Moosapet',
+        'Musheerabad',
+        'Nacharam',
+        'Nagole',
+        'Nallakunta',
+        'Nampally',
+        'Nanakramguda',
+        'Narsingi',
+        'Nizampet',
+        'Panjagutta',
+        'Patancheru',
+        'Pragathi Nagar',
+        'Raidurg',
+        'Rajendranagar',
+        'SR Nagar',
+        'Sainikpuri',
+        'Secunderabad',
+        'Shaikpet',
+        'Shamshabad',
+        'Somajiguda',
+        'Tarnaka',
+        'Tellapur',
+        'Tolichowki',
+        'Trimulgherry',
+        'Uppal',
+        'Vanasthalipuram'
+        // END hyderabad-areas
+      ];
+    }
+    function inHyderabad(lat, lng) {
+      return lat is number && lng is number
+        && lat >= 17.15 && lat <= 17.75 && lng >= 78.1 && lng <= 78.75;
+    }
+
     // ─── Users ─────────────────────────────────────────────────────────────
     // Public profile. Contact details live in the private subcollection.
     // System fields (verified, topRated, rating, reviewCount, completedStays)
@@ -30,7 +111,7 @@ service cloud.firestore {
       function editableFields() {
         return ['uid', 'displayName', 'photoURL', 'role', 'onboarded', 'location', 'bio',
                 'services', 'petTypes', 'pricePerNight', 'experience', 'availability',
-                'responseTime', 'home', 'phone', 'address', 'lat', 'lng', 'hours', 'open24x7',
+                'responseTime', 'home', 'phone', 'address', 'lat', 'lng', 'hours', 'open24x7', 'area',
                 'website', 'createdAt', 'updatedAt'];
       }
       // A sitter can't go live until they have submitted identity verification.
@@ -60,6 +141,8 @@ service cloud.firestore {
             && (!('open24x7' in m) || m.open24x7 is bool)
             && (!('lat' in m) || (m.lat is number && m.lat >= -90 && m.lat <= 90))
             && (!('lng' in m) || (m.lng is number && m.lng >= -180 && m.lng <= 180))
+            // Listings are for Hyderabad: a pinned point must be inside the service area.
+            && (!('lat' in m && 'lng' in m) || inHyderabad(m.lat, m.lng))
             // A listing can't go live without a way to reach it.
             && (m.onboarded != true || (m.phone is string && m.address is string && m.address.size() > 0
                   && 'location' in m && m.location is string && m.location.size() > 0));
@@ -72,6 +155,11 @@ service cloud.firestore {
           && m.onboarded is bool
           && (!('photoURL' in m) || m.photoURL == null || isStr(m.photoURL, 0, 2048))
           && optStr(m, 'location', 80)
+          && (!('area' in m) || hydArea(m.area))
+          // Everyone except someone just looking around says which Hyderabad neighbourhood they are in.
+          && (!(m.onboarded == true && m.role in ['parent', 'sitter', 'rescue', 'vet']) || hydArea(m.area))
+          // Real accounts only: a parent or sitter must have a verified mobile number (it is in the sign-in token).
+          && (!(m.onboarded == true && m.role in ['parent', 'sitter']) || 'phone_number' in request.auth.token)
           && optStr(m, 'bio', 600)
           && optStr(m, 'experience', 30)
           && optStr(m, 'responseTime', 40)
@@ -136,7 +224,7 @@ service cloud.firestore {
           && m.idType in ['aadhaar', 'pan', 'passport', 'driving_licence', 'voter_id']
           && m.idLast4 is string && m.idLast4.matches('^[A-Za-z0-9]{4}$')
           && isStr(m.addressLine, 5, 160) && isStr(m.city, 2, 60)
-          && m.pincode is string && m.pincode.matches('^[0-9]{6}$')
+          && m.pincode is string && m.pincode.matches('^50[0-2][0-9]{3}$')
           && isStr(m.emergencyName, 2, 60)
           && m.emergencyPhone is string && m.emergencyPhone.matches('^[+0-9 ()-]{7,20}$')
           && ownFile(m.idFront)

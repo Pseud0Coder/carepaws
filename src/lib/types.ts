@@ -10,6 +10,8 @@ export interface UserProfile {
   role: Role | null;
   onboarded: boolean;
   location?: string;
+  /** The Hyderabad neighbourhood they picked (see hyderabad-areas.json). Their exact address is never public. */
+  area?: string;
   bio?: string;
   createdAt?: string;
 

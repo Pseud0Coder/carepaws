@@ -109,8 +109,12 @@ function SitterSearch() {
         {sitters?.length === 0 && (
           <EmptyState
             icon={<SearchX className="h-7 w-7" />}
-            title="No sitters match"
-            body="Try another area, or loosen your filters."
+            title={search || petType !== "All" || maxPrice || vouchedOnly ? "No sitters match" : "No verified sitters yet"}
+            body={
+              search || petType !== "All" || maxPrice || vouchedOnly
+                ? "Try another area, or loosen your filters."
+                : "CarePaws is launching in Hyderabad. Every sitter is ID-checked before they’re listed, and the first ones are being verified now."
+            }
             action={
               <Button
                 variant="secondary"

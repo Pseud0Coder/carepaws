@@ -16,7 +16,7 @@ const body = Manrope({
 
 export const metadata: Metadata = {
   title: "CarePaws",
-  description: "Trusted, verified sitters for the pets you love. Book stays, chat with sitters and pay securely.",
+  description: "Trusted, ID-verified pet sitters in Hyderabad. Book stays, chat with sitters and pay securely.",
   applicationName: "CarePaws",
   icons: { icon: "/icon.svg" },
 };

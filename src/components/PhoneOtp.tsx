@@ -98,16 +98,24 @@ export default function PhoneOtp({
     <div>
       {stage === "number" ? (
         <form onSubmit={send} className="space-y-4">
-          <div className="grid grid-cols-[7.5rem_1fr] gap-3">
-            <Field label="Country">
-              <Select value={cc} onChange={(e) => setCc(e.target.value)} aria-label="Country code">
-                {COUNTRIES.map((c) => (
-                  <option key={c.code} value={c.code}>
-                    {c.code}
-                  </option>
-                ))}
-              </Select>
-            </Field>
+          <div className={COUNTRIES.length > 1 ? "grid grid-cols-[7.5rem_1fr] gap-3" : "grid grid-cols-[4.5rem_1fr] gap-3"}>
+            {COUNTRIES.length > 1 ? (
+              <Field label="Country">
+                <Select value={cc} onChange={(e) => setCc(e.target.value)} aria-label="Country code">
+                  {COUNTRIES.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.code}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            ) : (
+              <Field label="Code">
+                <div className="flex h-12 items-center justify-center rounded-2xl border border-oat-deep bg-oat/60 font-semibold text-bark" aria-label="Country code +91">
+                  {COUNTRIES[0].code}
+                </div>
+              </Field>
+            )}
             <Field label="Mobile number">
               <Input
                 type="tel"

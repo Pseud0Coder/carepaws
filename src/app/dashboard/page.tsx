@@ -22,13 +22,15 @@ import {
   Wallet,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { addPet, deleteMyAccount, deletePet, getContact, getPets, getSitter, getVouchesByOrg, subscribeBookings, updateContact, updatePet, uploadAvatar, withdrawVouch } from "@/lib/db";
+import { addPet, deleteMyAccount, deletePet, getPets, getSitter, getVouchesByOrg, subscribeBookings, updatePet, uploadAvatar, withdrawVouch } from "@/lib/db";
 import { isOrgRole, type Booking, type Pet, type SitterProfile, type UserProfile, type Vouch } from "@/lib/types";
 import { PET_EMOJI, PLATFORM_FEE_RATE, ROLE_LABEL } from "@/lib/constants";
 import { formatINR } from "@/lib/format";
+import { isHydArea, locationLabel } from "@/lib/hyderabad";
 import { getThemePref, setThemePref, type ThemePref } from "@/lib/theme";
 import { cn } from "@/lib/cn";
 import Avatar from "@/components/Avatar";
+import AreaSelect from "@/components/AreaSelect";
 import Footer from "@/components/Footer";
 import KycStatusCard from "@/components/KycStatusCard";
 import { orgHref } from "@/components/OrgCard";
@@ -291,27 +293,23 @@ function OrgPanel({ profile }: { profile: UserProfile }) {
 }
 
 function EditDetails({ profile, onDone }: { profile: UserProfile; onDone: () => void }) {
-  const { saveProfile } = useAuth();
+  const { saveProfile, phoneNumber } = useAuth();
   const toast = useToast();
   const [displayName, setName] = useState(profile.displayName);
-  const [location, setLocation] = useState(profile.location ?? "");
+  const [area, setArea] = useState(isHydArea(profile.area) ? (profile.area ?? "") : "");
   const [bio, setBio] = useState(profile.bio ?? "");
-  const [phone, setPhone] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const org = isOrgRole(profile.role);
-  useEffect(() => {
-    if (!org) getContact(profile.uid).then((c) => setPhone(c?.phone ?? ""));
-  }, [profile.uid, org]);
 
   async function save(e: FormEvent) {
     e.preventDefault();
+    if (!isHydArea(area)) return setError("Choose your neighbourhood in Hyderabad.");
     setSaving(true);
     setError("");
     try {
-      await saveProfile({ displayName: displayName.trim(), location: location.trim(), bio: bio.trim() });
-      if (!org) await updateContact(profile.uid, { phone: phone.trim() });
+      await saveProfile({ displayName: displayName.trim(), area, location: locationLabel(area), bio: bio.trim() });
       toast("Profile saved.");
       onDone();
     } catch (e) {
@@ -326,13 +324,11 @@ function EditDetails({ profile, onDone }: { profile: UserProfile; onDone: () => 
       <Field label="Name">
         <Input value={displayName} onChange={(e) => setName(e.target.value)} required minLength={2} maxLength={60} />
       </Field>
-      <Field label="Neighbourhood, city">
-        <Input value={location} onChange={(e) => setLocation(e.target.value)} maxLength={80} />
-      </Field>
-      {!org && (
-        <Field label="Phone (private)">
-          <Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} maxLength={20} />
-        </Field>
+      <AreaSelect value={area} onChange={setArea} label="Neighbourhood in Hyderabad" />
+      {!org && phoneNumber && (
+        <p className="rounded-2xl bg-moss-tint px-4 py-3 text-sm font-semibold text-moss">
+          Mobile {phoneNumber} is verified. Only you and the people you book with can reach you on it.
+        </p>
       )}
       <Field label="Bio">
         <TextArea value={bio} onChange={(e) => setBio(e.target.value)} maxLength={600} />

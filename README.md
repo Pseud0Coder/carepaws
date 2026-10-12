@@ -73,11 +73,13 @@ Only Cloud Functions can mark a booking paid, after verifying the Razorpay signa
    (cd functions && npm install)
    firebase deploy --only firestore,storage,functions
    ```
-5. **Demo data (optional).** Uses the Admin SDK, so it needs a service account:
-   ```bash
-   cd functions && GOOGLE_APPLICATION_CREDENTIALS=key.json node seed.mjs --project <project-id>
-   ```
-   The seed creates **fictional** sitters, rescues and clinics. Their phone numbers are deliberately invalid placeholders (`+91 00000 000NN`), so a demo can never ring a real person. Remove it before launch.
+5. **No demo data.** The app ships empty on purpose. Every account, listing and review in production is real. Never run any seeding against the production project. If you tried the app before launch, delete test users under Firebase console → Authentication.
+
+### Launch scope: Hyderabad, real accounts only
+
+- **Where:** CarePaws is launching in Hyderabad. People choose a neighbourhood from a fixed list (`src/lib/hyderabad-areas.json`: approximate centres, never addresses). The security rules carry a copy of that list and `tests/areas.test.mjs` fails if the two drift apart. Sitter ID addresses must have a Hyderabad pincode (500, 501 or 502), and rescue or clinic pins must be inside the Hyderabad bounds.
+- **Real accounts:** a parent or sitter can't finish onboarding without a **verified Indian mobile number** (checked by the rules, from the sign-in token), and each number belongs to one account. Sitters are also ID-verified by an admin before they appear. Someone "just looking around" needs neither.
+- **Not in Hyderabad?** They can browse. They can't create a parent, sitter or listing profile.
 
 ### Sitter identity verification (KYC)
 
@@ -164,10 +166,11 @@ npm run dev                    # http://localhost:3000 against your Firebase pro
 To run fully offline against the emulators, set `NEXT_PUBLIC_USE_EMULATORS=1` in `.env.local`, then:
 
 ```bash
-npm run emulators              # auth, firestore, storage, functions
-npm run seed:emulator          # in another terminal (needs functions/node_modules)
+npm run emulators              # auth, firestore, storage, functions (starts empty)
 npm run dev
 ```
+
+There is no seed data. Create test accounts through the app. A sitter appears in the list after you approve their KYC with `functions/admin.mjs` against the emulator.
 
 Phone sign-in works in the Auth emulator (it prints the SMS code at `http://127.0.0.1:9099/emulator/v1/projects/demo-carepaws/verificationCodes`). The Storage emulator can't tell a new upload from an overwrite, so "photos can't be replaced" rests on the production rule `allow update, delete: if false`.
 
@@ -175,7 +178,7 @@ Checks:
 
 ```bash
 npm run lint && npm run typecheck
-npm run test:rules             # 85 security-rule tests (Firestore + Storage) on the emulator (needs firebase-tools)
+npm run test:rules             # 90 security-rule tests (Firestore + Storage) on the emulator (needs firebase-tools)
 ```
 
 ## Design

@@ -35,10 +35,12 @@ const day = (offset) => {
 
 const sitter = {
   uid: "sitter1",
-  displayName: "Sam Sitter",
+  displayName: "Test Sitter",
   photoURL: null,
   role: "sitter",
   onboarded: true,
+  area: "Gachibowli",
+  location: "Gachibowli, Hyderabad",
   verified: true,
   pricePerNight: 2000,
   petTypes: ["Dogs"],
@@ -46,19 +48,20 @@ const sitter = {
 };
 const vet = {
   uid: "vet1",
-  displayName: "Anand Clinic for Animals",
+  displayName: "Test Vet Clinic",
   photoURL: null,
   role: "vet",
   onboarded: true,
   verified: true,
-  location: "Andheri, Mumbai",
+  area: "Madhapur",
+  location: "Madhapur, Hyderabad",
   address: "1 Lokhandwala",
   phone: "+91 00000 00001",
   services: ["Vaccination"],
   petTypes: ["Dogs"],
 };
-const rescue = { ...vet, uid: "rescue1", displayName: "Pawsitive Purpose Rescue", role: "rescue" };
-const parent = { uid: "parent1", displayName: "Pat Parent", photoURL: null, role: "parent", onboarded: true };
+const rescue = { ...vet, uid: "rescue1", displayName: "Test Rescue", role: "rescue" };
+const parent = { uid: "parent1", displayName: "Test Parent", photoURL: null, role: "parent", onboarded: true, area: "Kondapur", location: "Kondapur, Hyderabad" };
 
 const careSheet = { vaccinated: "up_to_date", vaccinatedOn: "2026-03-01", tempers: ["Friendly with dogs"], medical: "None", vetName: "Dr Rao", vetPhone: "+91 00000 00005" };
 function declarations(over = {}) {
@@ -105,7 +108,9 @@ function booking(over = {}) {
 }
 
 const omit = (o, ...keys) => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
-const as = (uid) => env.authenticatedContext(uid).firestore();
+const PHONE = "+919876543210";
+const as = (uid) => env.authenticatedContext(uid, { phone_number: PHONE }).firestore();
+const asNoPhone = (uid) => env.authenticatedContext(uid).firestore();
 const anon = () => env.unauthenticatedContext().firestore();
 
 async function seed(fn) {
@@ -158,6 +163,24 @@ describe("users", () => {
     await assertSucceeds(setDoc(doc(as("new1"), "users/new1"), p));
     await assertFails(setDoc(doc(as("new2"), "users/new2"), { ...p, uid: "new2", verified: true }));
     await assertFails(setDoc(doc(as("new3"), "users/someoneelse"), { ...p, uid: "someoneelse" }));
+  });
+  test("a parent or sitter can't finish onboarding without a verified phone number", async () => {
+    const draft = { uid: "np1", displayName: "No Phone", photoURL: null, role: "parent", onboarded: false };
+    await assertSucceeds(setDoc(doc(asNoPhone("np1"), "users/np1"), draft));
+    await assertFails(updateDoc(doc(asNoPhone("np1"), "users/np1"), { onboarded: true, area: "Madhapur", location: "Madhapur, Hyderabad" }));
+    // The same person succeeds once the number is verified (it shows up in their sign-in token).
+    await assertSucceeds(updateDoc(doc(as("np1"), "users/np1"), { onboarded: true, area: "Madhapur", location: "Madhapur, Hyderabad" }));
+  });
+  test("onboarding needs a Hyderabad neighbourhood from the list", async () => {
+    const draft = { uid: "ar1", displayName: "Area Test", photoURL: null, role: "parent", onboarded: false };
+    await assertSucceeds(setDoc(doc(as("ar1"), "users/ar1"), draft));
+    await assertFails(updateDoc(doc(as("ar1"), "users/ar1"), { onboarded: true })); // no area at all
+    await assertFails(updateDoc(doc(as("ar1"), "users/ar1"), { onboarded: true, area: "Bandra West", location: "Bandra West, Mumbai" }));
+    await assertFails(updateDoc(doc(as("ar1"), "users/ar1"), { onboarded: true, area: "Gachibowli; DROP", location: "x" }));
+    await assertSucceeds(updateDoc(doc(as("ar1"), "users/ar1"), { onboarded: true, area: "Gachibowli", location: "Gachibowli, Hyderabad" }));
+  });
+  test("someone just looking around needs neither a phone nor an area", async () => {
+    await assertSucceeds(setDoc(doc(asNoPhone("ex1"), "users/ex1"), { uid: "ex1", displayName: "Explorer", photoURL: null, role: "explorer", onboarded: true }));
   });
   test("contact details are private", async () => {
     await assertSucceeds(setDoc(doc(as("parent1"), "users/parent1/private/contact"), { email: "p@x.com" }));
@@ -353,7 +376,7 @@ describe("rescues and vets", () => {
   test("an organisation can publish a phone number; people cannot", async () => {
     await assertSucceeds(setDoc(doc(as("org9"), "users/org9"), newOrg));
     await assertSucceeds(
-      updateDoc(doc(as("org9"), "users/org9"), { onboarded: true, location: "Pune", address: "5 Lane", phone: "+91 00000 00099", lat: 18.5, lng: 73.8 })
+      updateDoc(doc(as("org9"), "users/org9"), { onboarded: true, area: "Banjara Hills", location: "Banjara Hills, Hyderabad", address: "5 Lane", phone: "+91 00000 00099", lat: 17.41, lng: 78.45 })
     );
     await assertFails(updateDoc(doc(as("parent1"), "users/parent1"), { phone: "+91 00000 00002" }));
     await assertFails(updateDoc(doc(as("sitter1"), "users/sitter1"), { address: "My home address" }));
@@ -361,10 +384,11 @@ describe("rescues and vets", () => {
   test("a listing can't go live without phone and address, or with junk values", async () => {
     await assertSucceeds(setDoc(doc(as("org9"), "users/org9"), newOrg));
     await assertFails(updateDoc(doc(as("org9"), "users/org9"), { onboarded: true, location: "Pune" }));
-    const ok = { onboarded: true, location: "Pune", address: "5 Lane", phone: "+91 00000 00099" };
+    const ok = { onboarded: true, area: "Banjara Hills", location: "Banjara Hills, Hyderabad", address: "5 Lane", phone: "+91 00000 00099" };
     await assertFails(updateDoc(doc(as("org9"), "users/org9"), { ...ok, phone: "call me maybe" }));
     await assertFails(updateDoc(doc(as("org9"), "users/org9"), { ...ok, website: "javascript:alert(1)" }));
     await assertFails(updateDoc(doc(as("org9"), "users/org9"), { ...ok, lat: 123 }));
+    await assertFails(updateDoc(doc(as("org9"), "users/org9"), { ...ok, lat: 18.52, lng: 73.85 })); // a pin outside Hyderabad
     await assertSucceeds(updateDoc(doc(as("org9"), "users/org9"), { ...ok, website: "https://hope.example.org" }));
   });
   test("an organisation can't verify itself or change its role", async () => {
@@ -389,7 +413,7 @@ describe("rescues and vets", () => {
 describe("vouches", () => {
   const vouch = (over = {}) => ({
     orgId: "vet1",
-    orgName: "Anand Clinic for Animals",
+    orgName: "Test Vet Clinic",
     orgPhoto: null,
     orgType: "vet",
     sitterId: "sitter1",
@@ -401,7 +425,7 @@ describe("vouches", () => {
   test("a verified vet or rescue can vouch for a sitter", async () => {
     await assertSucceeds(setDoc(doc(as("vet1"), "vouches/vet1_sitter1"), vouch()));
     await assertSucceeds(
-      setDoc(doc(as("rescue1"), "vouches/rescue1_sitter1"), vouch({ orgId: "rescue1", orgName: "Pawsitive Purpose Rescue", orgType: "rescue" }))
+      setDoc(doc(as("rescue1"), "vouches/rescue1_sitter1"), vouch({ orgId: "rescue1", orgName: "Test Rescue", orgType: "rescue" }))
     );
     await assertSucceeds(getDoc(doc(anon(), "vouches/vet1_sitter1")));
   });
@@ -473,8 +497,8 @@ describe("sitter KYC", () => {
     idType: "aadhaar",
     idLast4: "1234",
     addressLine: "12 Hill Road, Bandra",
-    city: "Mumbai",
-    pincode: "400050",
+    city: "Hyderabad",
+    pincode: "500032",
     emergencyName: "Raj Sitter",
     emergencyPhone: "+91 00000 00007",
     idFront: "kyc/ns1/id-front.jpg",
@@ -503,14 +527,15 @@ describe("sitter KYC", () => {
     await assertFails(getDoc(doc(as("sitter1"), "kyc/ns1")));
   });
   test("needs a verified mobile number", async () => {
-    await assertFails(setDoc(doc(as("ns1"), "kyc/ns1"), caseDoc()));
+    await assertFails(setDoc(doc(asNoPhone("ns1"), "kyc/ns1"), caseDoc()));
   });
   test("must be an adult, with a 4-character ID tail, valid pincode and a selfie", async () => {
     const db = withPhone("ns1");
     const y = new Date().getFullYear();
     await assertFails(setDoc(doc(db, "kyc/ns1"), caseDoc({ dob: `${y - 17}-01-01` })));
     await assertFails(setDoc(doc(db, "kyc/ns1"), caseDoc({ idLast4: "123456789012" }))); // a full number must never be stored
-    await assertFails(setDoc(doc(db, "kyc/ns1"), caseDoc({ pincode: "40005" })));
+    await assertFails(setDoc(doc(db, "kyc/ns1"), caseDoc({ pincode: "50003" })));
+    await assertFails(setDoc(doc(db, "kyc/ns1"), caseDoc({ pincode: "400050" }))); // Hyderabad pincodes only (500, 501, 502)
     await assertFails(setDoc(doc(db, "kyc/ns1"), omit(caseDoc(), "selfie")));
   });
   test("files must be the sitter's own", async () => {
@@ -551,7 +576,7 @@ describe("sitter KYC", () => {
     await assertFails(setDoc(doc(withPhone("ns1"), "kyc/ns1"), caseDoc({ legalName: "Someone Else" })));
   });
   test("a sitter can't go live without a submitted case", async () => {
-    const ready = { onboarded: true, pricePerNight: 1800, petTypes: ["Dogs"] };
+    const ready = { onboarded: true, area: "Gachibowli", location: "Gachibowli, Hyderabad", pricePerNight: 1800, petTypes: ["Dogs"] };
     await assertFails(updateDoc(doc(as("ns1"), "users/ns1"), ready));
     await assertSucceeds(setDoc(doc(withPhone("ns1"), "kyc/ns1"), caseDoc()));
     await assertSucceeds(updateDoc(doc(as("ns1"), "users/ns1"), ready));

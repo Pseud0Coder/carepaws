@@ -1,0 +1,346 @@
+{
+  "note": "Approximate area centres, used only to sort by distance and to place a pin on the map. They are not addresses.",
+  "bounds": {
+    "minLat": 17.15,
+    "maxLat": 17.75,
+    "minLng": 78.1,
+    "maxLng": 78.75
+  },
+  "areas": [
+    {
+      "name": "AS Rao Nagar",
+      "lat": 17.477,
+      "lng": 78.56
+    },
+    {
+      "name": "Abids",
+      "lat": 17.3916,
+      "lng": 78.475
+    },
+    {
+      "name": "Alwal",
+      "lat": 17.505,
+      "lng": 78.513
+    },
+    {
+      "name": "Ameerpet",
+      "lat": 17.4375,
+      "lng": 78.4483
+    },
+    {
+      "name": "Attapur",
+      "lat": 17.3698,
+      "lng": 78.4237
+    },
+    {
+      "name": "Bachupally",
+      "lat": 17.5442,
+      "lng": 78.3659
+    },
+    {
+      "name": "Banjara Hills",
+      "lat": 17.4126,
+      "lng": 78.4482
+    },
+    {
+      "name": "Begumpet",
+      "lat": 17.444,
+      "lng": 78.4676
+    },
+    {
+      "name": "Boduppal",
+      "lat": 17.414,
+      "lng": 78.585
+    },
+    {
+      "name": "Bowenpally",
+      "lat": 17.4711,
+      "lng": 78.48
+    },
+    {
+      "name": "Chandanagar",
+      "lat": 17.493,
+      "lng": 78.328
+    },
+    {
+      "name": "Charminar and Old City",
+      "lat": 17.3616,
+      "lng": 78.4747
+    },
+    {
+      "name": "Dilsukhnagar",
+      "lat": 17.3688,
+      "lng": 78.5247
+    },
+    {
+      "name": "ECIL",
+      "lat": 17.473,
+      "lng": 78.57
+    },
+    {
+      "name": "Erragadda",
+      "lat": 17.459,
+      "lng": 78.4349
+    },
+    {
+      "name": "Film Nagar",
+      "lat": 17.4119,
+      "lng": 78.4
+    },
+    {
+      "name": "Financial District",
+      "lat": 17.417,
+      "lng": 78.343
+    },
+    {
+      "name": "Gachibowli",
+      "lat": 17.4401,
+      "lng": 78.3489
+    },
+    {
+      "name": "Golconda",
+      "lat": 17.3833,
+      "lng": 78.4011
+    },
+    {
+      "name": "HITEC City",
+      "lat": 17.4435,
+      "lng": 78.3772
+    },
+    {
+      "name": "Habsiguda",
+      "lat": 17.412,
+      "lng": 78.542
+    },
+    {
+      "name": "Hafeezpet",
+      "lat": 17.488,
+      "lng": 78.357
+    },
+    {
+      "name": "Himayatnagar",
+      "lat": 17.4,
+      "lng": 78.478
+    },
+    {
+      "name": "Jubilee Hills",
+      "lat": 17.4325,
+      "lng": 78.4073
+    },
+    {
+      "name": "KPHB Colony",
+      "lat": 17.4933,
+      "lng": 78.3913
+    },
+    {
+      "name": "Khairatabad",
+      "lat": 17.4128,
+      "lng": 78.4624
+    },
+    {
+      "name": "Khajaguda",
+      "lat": 17.418,
+      "lng": 78.37
+    },
+    {
+      "name": "Kokapet",
+      "lat": 17.3989,
+      "lng": 78.3321
+    },
+    {
+      "name": "Kompally",
+      "lat": 17.536,
+      "lng": 78.4876
+    },
+    {
+      "name": "Kondapur",
+      "lat": 17.46,
+      "lng": 78.364
+    },
+    {
+      "name": "Kothapet",
+      "lat": 17.368,
+      "lng": 78.539
+    },
+    {
+      "name": "Kukatpally",
+      "lat": 17.4948,
+      "lng": 78.3996
+    },
+    {
+      "name": "LB Nagar",
+      "lat": 17.3475,
+      "lng": 78.552
+    },
+    {
+      "name": "Langar Houz",
+      "lat": 17.385,
+      "lng": 78.424
+    },
+    {
+      "name": "Lingampally",
+      "lat": 17.4934,
+      "lng": 78.3175
+    },
+    {
+      "name": "Madhapur",
+      "lat": 17.4486,
+      "lng": 78.3908
+    },
+    {
+      "name": "Malkajgiri",
+      "lat": 17.451,
+      "lng": 78.526
+    },
+    {
+      "name": "Manikonda",
+      "lat": 17.4034,
+      "lng": 78.3871
+    },
+    {
+      "name": "Medchal",
+      "lat": 17.63,
+      "lng": 78.48
+    },
+    {
+      "name": "Mehdipatnam",
+      "lat": 17.3957,
+      "lng": 78.4412
+    },
+    {
+      "name": "Miyapur",
+      "lat": 17.4969,
+      "lng": 78.3544
+    },
+    {
+      "name": "Moosapet",
+      "lat": 17.466,
+      "lng": 78.427
+    },
+    {
+      "name": "Musheerabad",
+      "lat": 17.417,
+      "lng": 78.495
+    },
+    {
+      "name": "Nacharam",
+      "lat": 17.429,
+      "lng": 78.55
+    },
+    {
+      "name": "Nagole",
+      "lat": 17.371,
+      "lng": 78.559
+    },
+    {
+      "name": "Nallakunta",
+      "lat": 17.404,
+      "lng": 78.493
+    },
+    {
+      "name": "Nampally",
+      "lat": 17.392,
+      "lng": 78.469
+    },
+    {
+      "name": "Nanakramguda",
+      "lat": 17.418,
+      "lng": 78.338
+    },
+    {
+      "name": "Narsingi",
+      "lat": 17.3917,
+      "lng": 78.365
+    },
+    {
+      "name": "Nizampet",
+      "lat": 17.5189,
+      "lng": 78.386
+    },
+    {
+      "name": "Panjagutta",
+      "lat": 17.4256,
+      "lng": 78.4513
+    },
+    {
+      "name": "Patancheru",
+      "lat": 17.53,
+      "lng": 78.265
+    },
+    {
+      "name": "Pragathi Nagar",
+      "lat": 17.519,
+      "lng": 78.379
+    },
+    {
+      "name": "Raidurg",
+      "lat": 17.423,
+      "lng": 78.375
+    },
+    {
+      "name": "Rajendranagar",
+      "lat": 17.3169,
+      "lng": 78.4
+    },
+    {
+      "name": "SR Nagar",
+      "lat": 17.444,
+      "lng": 78.44
+    },
+    {
+      "name": "Sainikpuri",
+      "lat": 17.4912,
+      "lng": 78.5535
+    },
+    {
+      "name": "Secunderabad",
+      "lat": 17.4399,
+      "lng": 78.4983
+    },
+    {
+      "name": "Shaikpet",
+      "lat": 17.4072,
+      "lng": 78.4045
+    },
+    {
+      "name": "Shamshabad",
+      "lat": 17.259,
+      "lng": 78.415
+    },
+    {
+      "name": "Somajiguda",
+      "lat": 17.4239,
+      "lng": 78.4574
+    },
+    {
+      "name": "Tarnaka",
+      "lat": 17.4281,
+      "lng": 78.5276
+    },
+    {
+      "name": "Tellapur",
+      "lat": 17.456,
+      "lng": 78.287
+    },
+    {
+      "name": "Tolichowki",
+      "lat": 17.4023,
+      "lng": 78.4119
+    },
+    {
+      "name": "Trimulgherry",
+      "lat": 17.469,
+      "lng": 78.503
+    },
+    {
+      "name": "Uppal",
+      "lat": 17.4018,
+      "lng": 78.5593
+    },
+    {
+      "name": "Vanasthalipuram",
+      "lat": 17.334,
+      "lng": 78.56
+    }
+  ]
+}

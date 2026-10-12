@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth-context";
 import { submitKyc, type KycInput } from "@/lib/db";
 import { compressImage } from "@/lib/images";
 import { KYC_ID_TYPES, SITTER_DECLARATIONS, SITTER_DECLARATIONS_VERSION } from "@/lib/constants";
+import { HYD_CITY, HYD_PINCODE } from "@/lib/hyderabad";
 import type { KycIdType } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import PhoneOtp from "./PhoneOtp";
@@ -42,7 +43,8 @@ export default function KycForm({
   const [idType, setIdType] = useState<KycIdType>("aadhaar");
   const [idLast4, setIdLast4] = useState("");
   const [addressLine, setAddressLine] = useState("");
-  const [city, setCity] = useState("");
+  // CarePaws is launching in Hyderabad, so sitters live here. The city is fixed and the pincode must be local.
+  const city = HYD_CITY;
   const [pincode, setPincode] = useState("");
   const [emergencyName, setEmergencyName] = useState("");
   const [emergencyPhone, setEmergencyPhone] = useState("");
@@ -67,8 +69,8 @@ export default function KycForm({
     if (!idFront) return "Add a photo of your ID.";
     if (idMeta.back && !idBack) return "Add the back of your ID.";
     if (!selfie) return "Take a selfie so we can match it to your ID.";
-    if (addressLine.trim().length < 5 || city.trim().length < 2) return "Enter your full home address.";
-    if (!/^\d{6}$/.test(pincode)) return "Enter your 6-digit pincode.";
+    if (addressLine.trim().length < 5) return "Enter your full home address.";
+    if (!HYD_PINCODE.test(pincode)) return "Enter your 6-digit Hyderabad pincode (it starts with 500, 501 or 502).";
     if (!idMeta.address && !addressProof) return "Add an address proof (e.g. a recent utility bill).";
     if (emergencyName.trim().length < 2) return "Add an emergency contact’s name.";
     if (!/^[+0-9 ()-]{7,20}$/.test(emergencyPhone.trim())) return "Add an emergency contact’s phone number.";
@@ -204,7 +206,7 @@ export default function KycForm({
           </Field>
           <div className="grid grid-cols-[1fr_7rem] gap-3">
             <Field label="City">
-              <Input value={city} onChange={(e) => setCity(e.target.value)} autoComplete="address-level2" maxLength={60} />
+              <Input value={city} readOnly aria-readonly className="bg-oat/60" autoComplete="address-level2" />
             </Field>
             <Field label="Pincode">
               <Input value={pincode} onChange={(e) => setPincode(e.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" autoComplete="postal-code" />

@@ -12,14 +12,8 @@ import {
 import { Capacitor } from "@capacitor/core";
 import { auth } from "./firebase";
 
-export const COUNTRIES = [
-  { code: "+91", label: "India (+91)", min: 10, max: 10 },
-  { code: "+971", label: "UAE (+971)", min: 8, max: 9 },
-  { code: "+65", label: "Singapore (+65)", min: 8, max: 8 },
-  { code: "+44", label: "UK (+44)", min: 10, max: 10 },
-  { code: "+1", label: "US / Canada (+1)", min: 10, max: 10 },
-  { code: "+61", label: "Australia (+61)", min: 9, max: 9 },
-] as const;
+/** CarePaws is launching in Hyderabad, so only Indian mobile numbers are accepted. */
+export const COUNTRIES = [{ code: "+91", label: "India (+91)", min: 10, max: 10 }] as const;
 
 /** Returns an E.164 number, or an error message for the user. */
 export function toE164(countryCode: string, input: string): { phone: string } | { error: string } {
@@ -96,6 +90,7 @@ async function nativeSession(
 ): Promise<PhoneSession> {
   const { FirebaseAuthentication } = await import("@capacitor-firebase/authentication");
   let verificationId = "";
+  let forcedSms = false;
   const handles: { remove: () => Promise<void> }[] = [];
 
   const waitForCode = (resend: boolean) =>
@@ -116,13 +111,16 @@ async function nativeSession(
             if (e.verificationCode && verificationId) {
               opts.onAutoCode?.(e.verificationCode);
             } else if (!e.verificationCode) {
-              // "Instant verification": Google verified the number without an SMS and gave us no
-              // code, so the web SDK can't finish the sign-in. Ask to use another method.
-              done(() =>
-                reject(
-                  new Error("Your number was verified automatically but we couldn't finish signing you in. Please use Google or email instead.")
-                )
-              );
+              // "Instant verification": Google verified the number without an SMS and gave us no code, so the
+              // web SDK can't finish the sign-in. Ask Firebase to send a real SMS instead, once.
+              if (!forcedSms) {
+                forcedSms = true;
+                void FirebaseAuthentication.signInWithPhoneNumber({ phoneNumber: phone, skipNativeAuth: true, resendCode: true }).catch((err) =>
+                  done(() => reject(err))
+                );
+              } else {
+                done(() => reject(new Error("We couldn't send the SMS code to this number. Please check it and try again in a few minutes.")));
+              }
             }
           })
         );

@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { CheckCircle2, LocateFixed } from "lucide-react";
 import { ORG_SERVICES, PET_EMOJI, PET_TYPES } from "@/lib/constants";
 import { getPosition } from "@/lib/geo";
+import { HYD_CITY, inHyderabad } from "@/lib/hyderabad";
 import type { EditableProfile } from "@/lib/db";
 import type { OrgRole, UserProfile } from "@/lib/types";
 import { Button, Chip, ErrorNote, Field, Input } from "./ui";
@@ -47,7 +48,12 @@ export default function OrgSettingsForm({
     setLocating(true);
     setError("");
     try {
-      setPin(await getPosition(true));
+      const here = await getPosition(true);
+      if (!inHyderabad(here.lat, here.lng)) {
+        setError(`That location is outside ${HYD_CITY}. CarePaws is launching here first. Pin your premises while you're there.`);
+        return;
+      }
+      setPin(here);
     } catch (e) {
       setError((e as Error).message);
     } finally {

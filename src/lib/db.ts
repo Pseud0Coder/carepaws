@@ -113,6 +113,7 @@ export type EditableProfile = Pick<
   | "role"
   | "onboarded"
   | "location"
+  | "area"
   | "bio"
   | "services"
   | "petTypes"
@@ -604,7 +605,7 @@ export async function addComment(postId: string, author: UserProfile, text: stri
 
 // ─── Uploads ───────────────────────────────────────────────────────────────
 
-export async function uploadAvatar(uid: string, file: File): Promise<string> {
+export async function uploadAvatar(uid: string, file: Blob): Promise<string> {
   const ext = file.type === "image/png" ? "png" : "jpg";
   const r = ref(storage(), `users/${uid}/avatar.${ext}`);
   const snap = await uploadBytes(r, file, { contentType: file.type });
