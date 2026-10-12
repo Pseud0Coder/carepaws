@@ -3,12 +3,12 @@
 import Link from "next/link";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { LocateFixed, MapPinOff, Search, Siren, X } from "lucide-react";
+import { LocateFixed, MapPinOff, Search, Sparkles, Siren, X } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { getOrgs } from "@/lib/db";
 import { distanceKm, getPosition, loadSavedPosition, savePosition, type Coords } from "@/lib/geo";
 import { areaCentre, HYD_CITY, inHyderabad } from "@/lib/hyderabad";
-import { findNearbyVets, type VetPlace } from "@/lib/places";
+import { findNearbyVets, GOOGLE_VETS_ENABLED, type VetPlace } from "@/lib/places";
 import type { OrgProfile, OrgRole } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import AreaSelect from "@/components/AreaSelect";
@@ -29,7 +29,7 @@ function Nearby() {
   const [lists, setLists] = useState<Partial<Record<OrgRole, OrgProfile[]>>>({});
   const [failed, setFailed] = useState(false);
   const [search, setSearch] = useState("");
-  const [openNow, setOpenNow] = useState(emergency);
+  const [openNow, setOpenNow] = useState(emergency && GOOGLE_VETS_ENABLED);
   // Read once on the client; null on the server render, which is fine since this page is client-only data.
   const [pos, setPos] = useState<Coords | null>(() => (typeof window === "undefined" ? null : loadSavedPosition()));
   const [area, setArea] = useState(profile?.area ?? "");
@@ -57,7 +57,7 @@ function Nearby() {
   // Closest vets and clinics from Google Maps. Re-runs when the search point moves.
   const lastKey = useRef("");
   useEffect(() => {
-    if (type !== "vet" || !searchAt || lastKey.current === searchKey) return;
+    if (!GOOGLE_VETS_ENABLED || type !== "vet" || !searchAt || lastKey.current === searchKey) return;
     lastKey.current = searchKey;
     let live = true;
     setVets(null);
@@ -137,7 +137,7 @@ function Nearby() {
           <div className="mt-4 flex gap-3 rounded-[var(--radius-card)] bg-ember-tint p-4">
             <Siren className="h-6 w-6 shrink-0 text-ember" />
             <p className="text-sm text-bark">
-              <span className="font-semibold">Call ahead</span> so the clinic can prepare for your arrival. Hours come from Google Maps and can be out of date.
+              <span className="font-semibold">Call ahead</span> so the clinic can prepare for your arrival.{GOOGLE_VETS_ENABLED && " Hours come from Google Maps and can be out of date."}
             </p>
           </div>
         )}
@@ -188,7 +188,7 @@ function Nearby() {
               <LocateFixed className="h-4 w-4" /> {locating ? "Locating…" : "Use my location"}
             </Chip>
           )}
-          {type === "vet" && (
+          {type === "vet" && GOOGLE_VETS_ENABLED && (
             <Chip active={openNow} onClick={() => setOpenNow((v) => !v)}>
               Open now
             </Chip>
@@ -200,7 +200,7 @@ function Nearby() {
         {!searchAt && (
           <div className="mt-4 rounded-[var(--radius-card)] bg-oat/60 p-4">
             <p className="text-sm font-semibold text-bark">
-              {outside ? `You're outside ${HYD_CITY}.` : type === "vet" ? "Find the closest vets" : "Find help near you"}
+              {outside ? `You're outside ${HYD_CITY}.` : "Find help near you"}
             </p>
             <p className="mt-1 mb-3 text-sm text-bark-soft">
               {outside ? `CarePaws covers ${HYD_CITY} for now. Pick a neighbourhood to search there.` : "Use your location above, or choose your neighbourhood. Your location stays on your device."}
@@ -209,7 +209,17 @@ function Nearby() {
           </div>
         )}
 
-        {type === "vet" && searchAt && (
+        {type === "vet" && !GOOGLE_VETS_ENABLED && (
+          <div className="mt-4 flex gap-3 rounded-[var(--radius-card)] bg-moss-tint p-4">
+            <Sparkles className="h-6 w-6 shrink-0 text-moss" />
+            <p className="text-sm text-bark">
+              <span className="font-semibold">Coming soon: </span>
+              the closest vets and clinics on the map, with ratings, review summaries, a call button and directions. Until then, clinics that have joined CarePaws are listed below.
+            </p>
+          </div>
+        )}
+
+        {GOOGLE_VETS_ENABLED && type === "vet" && searchAt && (
           <section className="mt-4 space-y-3" aria-label="Closest vets and clinics">
             {vets === null ? (
               Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-56" />)
@@ -266,9 +276,9 @@ function Nearby() {
         )}
 
         {/* Clinics and rescues that have joined CarePaws (verified by us, and able to vouch for sitters). */}
-        {(type === "rescue" || (orgRows && orgRows.length > 0)) && (
+        {(type === "rescue" || !GOOGLE_VETS_ENABLED || (orgRows && orgRows.length > 0)) && (
           <section className="mt-6">
-            {type === "vet" && <h2 className="mb-2 font-display text-lg text-bark">On CarePaws</h2>}
+            {type === "vet" && GOOGLE_VETS_ENABLED && <h2 className="mb-2 font-display text-lg text-bark">On CarePaws</h2>}
             <div className="space-y-3">
               {orgRows === null && !failed ? (
                 Array.from({ length: 2 }, (_, i) => <Skeleton key={i} className="h-40" />)
@@ -277,7 +287,7 @@ function Nearby() {
               ) : orgRows!.length === 0 ? (
                 <EmptyState
                   icon={<MapPinOff className="h-7 w-7" />}
-                  title={search ? "Nothing matches" : "No rescues listed yet"}
+                  title={search ? "Nothing matches" : type === "vet" ? "No clinics listed yet" : "No rescues listed yet"}
                   body={search ? "Try another name or area." : "Listings appear here once CarePaws has verified them."}
                 />
               ) : (

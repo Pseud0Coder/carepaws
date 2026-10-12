@@ -4,6 +4,12 @@ import { httpsCallable } from "firebase/functions";
 import { functions } from "./firebase";
 import type { Coords } from "./geo";
 
+/**
+ * Google-powered vet search is paid (Places API + Cloud Functions), so it ships switched off and the Nearby
+ * screen shows "coming soon". Build with NEXT_PUBLIC_GOOGLE_VETS=1 once the function is deployed.
+ */
+export const GOOGLE_VETS_ENABLED = process.env.NEXT_PUBLIC_GOOGLE_VETS === "1";
+
 /** A clinic found through Google Maps. Mirrors VetPlace in functions/src/places.ts. */
 export interface VetPlace {
   id: string;

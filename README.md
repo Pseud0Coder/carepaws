@@ -83,6 +83,8 @@ Only Cloud Functions can mark a booking paid, after verifying the Razorpay signa
 
 ### Nearby vets (Google Maps)
 
+> **Switched off for now.** It needs the paid Blaze plan and Google Maps billing, so the Nearby screen shows "Coming soon" and lists only clinics registered on CarePaws. The code is complete. To turn it on: do the setup below, deploy `nearbyVets`, and build the app with `NEXT_PUBLIC_GOOGLE_VETS=1`.
+
 Pet parents and sitters see the closest vets and clinics from their location: Google's star rating and review count, whether it is open now, Google's AI summary of the reviews, a **Call** button and **Open in Maps** (turn-by-turn directions in the phone's Maps app). It uses the **Places API (New)**, field `reviewSummary` (English, India).
 
 - **The key stays on the server.** The app calls the `nearbyVets` Cloud Function, which calls Google. The function refuses anything outside Hyderabad before Google is called.
