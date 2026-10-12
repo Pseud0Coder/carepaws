@@ -81,6 +81,21 @@ Only Cloud Functions can mark a booking paid, after verifying the Razorpay signa
 - **Real accounts:** a parent or sitter can't finish onboarding without a **verified Indian mobile number** (checked by the rules, from the sign-in token), and each number belongs to one account. Sitters are also ID-verified by an admin before they appear. Someone "just looking around" needs neither.
 - **Not in Hyderabad?** They can browse. They can't create a parent, sitter or listing profile.
 
+### Nearby vets (Google Maps)
+
+Pet parents and sitters see the closest vets and clinics from their location: Google's star rating and review count, whether it is open now, Google's AI summary of the reviews, a **Call** button and **Open in Maps** (turn-by-turn directions in the phone's Maps app). It uses the **Places API (New)**, field `reviewSummary` (English, India).
+
+- **The key stays on the server.** The app calls the `nearbyVets` Cloud Function, which calls Google. The function refuses anything outside Hyderabad before Google is called.
+- **Cost control.** Anyone can search, including people just looking around, because an emergency shouldn't need an account. It is limited to 30 searches per person per hour (`PLACES_PER_HOUR`) and 3,000 a day across the app (`PLACES_DAILY_CAP`), and old counters are purged nightly. Also set a budget alert, and a daily quota on the Places API (New) in Google Cloud.
+- **Terms.** Nothing from Google is stored. The AI summary is always shown with "Summarized with Gemini" and a link to the reviews, plus Google's report link. Summaries aren't guaranteed for every clinic; those cards simply show the rating and contact.
+
+Setup (once):
+
+1. Google Cloud console → the same project as Firebase → **APIs & Services → Library** → enable **Places API (New)**. Billing must be on (the Blaze plan).
+2. **Credentials → Create API key.** Restrict it: **API restrictions → Places API (New) only**. (Don't use an Android or website restriction: the call comes from Cloud Functions.)
+3. `firebase functions:secrets:set GOOGLE_MAPS_API_KEY`, then `firebase deploy --only functions`.
+4. Locally, the emulator reads `functions/.secret.local` (`GOOGLE_MAPS_API_KEY=...`) and `functions/.env.local` (`PLACES_API_BASE=...` to point at a stand-in server). Both are git-ignored.
+
 ### Sitter identity verification (KYC)
 
 Sitters are **not listed and cannot be booked until you approve them**. In the app they verify a mobile number, give their legal name and date of birth, the ID type and the **last four characters** of the number (never the full number; Aadhaar must be a masked copy), photos of the ID and a selfie, an address (plus an address proof if the ID is a PAN card), an emergency contact, and agree to the care standards and a consent notice. A police clearance certificate is optional and earns a "Background checked" badge.

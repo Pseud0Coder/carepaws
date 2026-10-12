@@ -5,10 +5,12 @@
  *   - verifying payments and marking bookings paid
  *   - keeping sitter ratings and stay counts honest
  *
+ *   - finding the closest vets with Google Places, so the Maps key stays on the server
+ *
  * Secrets (set once with `firebase functions:secrets:set NAME`):
- *   RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET
+ *   RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, GOOGLE_MAPS_API_KEY
  */
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { FieldValue, Timestamp, getFirestore } from "firebase-admin/firestore";
@@ -19,6 +21,7 @@ import { onDocumentUpdated, onDocumentWritten } from "firebase-functions/v2/fire
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { defineSecret } from "firebase-functions/params";
 import Razorpay from "razorpay";
+import { RequestError, FIELD_MASK, buildSearchBody, dayBucket, hourBucket, mapPlaces, parseRequest } from "./places";
 
 initializeApp();
 const db = getFirestore();
@@ -28,6 +31,7 @@ setGlobalOptions({ region: "asia-south1", maxInstances: 10 });
 
 const RAZORPAY_KEY_ID = defineSecret("RAZORPAY_KEY_ID");
 const RAZORPAY_KEY_SECRET = defineSecret("RAZORPAY_KEY_SECRET");
+const GOOGLE_MAPS_API_KEY = defineSecret("GOOGLE_MAPS_API_KEY");
 
 interface BookingDoc {
   parentId: string;
@@ -304,4 +308,78 @@ export const deleteAccount = onCall({ timeoutSeconds: 300, memory: "512MiB" }, a
   // Last, so a failure above can simply be retried by the user.
   await getAuth().deleteUser(uid);
   return { deleted: true };
+});
+
+
+// ─── Nearby vets (Google Places) ────────────────────────────────────────────
+
+/** Counts one use against a bucket, and says whether it was still within the limit. */
+async function takeQuota(bucket: string, limit: number): Promise<boolean> {
+  const ref = db.collection("_limits").doc(bucket);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const n = ((snap.data()?.n as number | undefined) ?? 0) + 1;
+    if (n > limit) return false;
+    tx.set(ref, { n, expireAt: Timestamp.fromMillis(Date.now() + 3 * 24 * 3600 * 1000) });
+    return true;
+  });
+}
+
+/**
+ * The closest vets and clinics to a point in Hyderabad, with Google's rating, phone number, opening status and AI
+ * review summary. Open to everyone, including people just looking around (an emergency shouldn't need an account),
+ * so it is rate limited per person per hour and capped per day to keep the Google bill predictable.
+ * Nothing Google returns is stored.
+ */
+export const nearbyVets = onCall({ secrets: [GOOGLE_MAPS_API_KEY], timeoutSeconds: 20, memory: "256MiB" }, async (req) => {
+  let input: { lat: number; lng: number; radiusM: number };
+  try {
+    input = parseRequest(req.data);
+  } catch (e) {
+    if (e instanceof RequestError) throw new HttpsError(e.code === "out-of-range" ? "failed-precondition" : "invalid-argument", e.message);
+    throw e;
+  }
+
+  const who = req.auth?.uid ?? `ip_${createHash("sha256").update(String(req.rawRequest?.ip ?? "unknown")).digest("hex").slice(0, 24)}`;
+  const perHour = Number(process.env.PLACES_PER_HOUR) || 30;
+  const perDay = Number(process.env.PLACES_DAILY_CAP) || 3000;
+  if (!(await takeQuota(`places_${who}_${hourBucket()}`, perHour))) {
+    throw new HttpsError("resource-exhausted", "You've searched a lot just now. Please try again in a little while.");
+  }
+  if (!(await takeQuota(`places_day_${dayBucket()}`, perDay))) {
+    throw new HttpsError("resource-exhausted", "Vet search is very busy today. Please try again later, or call a clinic you know.");
+  }
+
+  const base = process.env.PLACES_API_BASE || "https://places.googleapis.com";
+  let res: Response;
+  try {
+    res = await fetch(`${base}/v1/places:searchNearby`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY.value(),
+        "X-Goog-FieldMask": FIELD_MASK,
+      },
+      body: JSON.stringify(buildSearchBody(input.lat, input.lng, input.radiusM)),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (e) {
+    console.error("Places request failed", e);
+    throw new HttpsError("unavailable", "Couldn't reach Google Maps. Please try again.");
+  }
+  if (!res.ok) {
+    // The key, the API restriction or the quota is wrong. Log it for the owner; the person only needs to know to retry.
+    console.error("Places API error", res.status, (await res.text()).slice(0, 500));
+    throw new HttpsError("unavailable", "Vet search is temporarily unavailable. Please try again soon.");
+  }
+  const vets = mapPlaces(await res.json(), { lat: input.lat, lng: input.lng });
+  return { vets, attribution: "Google Maps" };
+});
+
+/** Rate-limit counters only need to live for a few days. */
+export const purgeLimits = onSchedule({ schedule: "every day 04:10", timeZone: "Asia/Kolkata" }, async () => {
+  const old = await db.collection("_limits").where("expireAt", "<", Timestamp.now()).limit(500).get();
+  const batch = db.batch();
+  old.docs.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
 });
