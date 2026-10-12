@@ -8,6 +8,7 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
+  sendEmailVerification,
   signOut as fbSignOut,
   updateProfile as fbUpdateProfile,
   GoogleAuthProvider,
@@ -31,7 +32,13 @@ interface AuthContextType {
   refreshProfile: () => Promise<void>;
   /** The verified phone number on the signed-in account, if any. */
   phoneNumber: string | null;
-  /** Reloads the Firebase user and its token (call after linking a phone number). */
+  /** True once the email address on the account is confirmed (always true for Google accounts). */
+  emailVerified: boolean;
+  /** True when the account has a confirmed email or a confirmed mobile number. Real accounts only. */
+  verified: boolean;
+  /** Emails a confirmation link to the signed-in user. */
+  sendVerification: () => Promise<void>;
+  /** Reloads the Firebase user and its token (call after confirming an email or linking a phone number). */
   refreshUser: () => Promise<void>;
   /** Ids of people this user has blocked. */
   blocked: Set<string>;
@@ -59,6 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(isFirebaseConfigured);
   const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
+  const [emailVerified, setEmailVerified] = useState(false);
   const [blocked, setBlocked] = useState<Set<string>>(new Set());
 
   // Keep the block list live so feeds and chats hide blocked people straight away.
@@ -76,6 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return onAuthStateChanged(auth(), async (u) => {
       setUser(u);
       setPhoneNumber(u?.phoneNumber ?? null);
+      setEmailVerified(!!u?.email && u.emailVerified);
       if (u) {
         try {
           setProfile(await ensureProfile(u));
@@ -112,9 +121,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const u = auth().currentUser;
     if (!u) return;
     await u.reload();
-    // Security rules read the phone number from the ID token, so force a fresh one.
+    // Security rules read the verified email and phone number from the ID token, so force a fresh one.
     await u.getIdToken(true);
     setPhoneNumber(u.phoneNumber ?? null);
+    setEmailVerified(!!u.email && u.emailVerified);
+  }, []);
+
+  const sendVerification = useCallback(async () => {
+    const u = auth().currentUser;
+    if (!u) throw new Error("Not signed in");
+    await sendEmailVerification(u);
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
@@ -138,6 +154,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signUpWithEmail = useCallback(async (email: string, password: string, name: string) => {
     const res = await createUserWithEmailAndPassword(auth(), email, password);
     await fbUpdateProfile(res.user, { displayName: name });
+    // Confirms the address belongs to them. Onboarding waits for it, so every account is a real person.
+    await sendEmailVerification(res.user).catch(() => {});
     // onAuthStateChanged fired before the display name existed; write it now.
     const p = await ensureProfile({ ...res.user, displayName: name });
     if (p.displayName !== name) await updateProfile(res.user.uid, { displayName: name });
@@ -183,6 +201,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         saveProfile,
         refreshProfile,
         phoneNumber,
+        emailVerified,
+        verified: !!phoneNumber || emailVerified,
+        sendVerification,
         refreshUser,
         blocked,
         blockUser,

@@ -3,18 +3,19 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Check, CheckCircle2, Compass, HeartHandshake, Home, MapPin, PawPrint, Smartphone, Stethoscope, Warehouse } from "lucide-react";
+import { Check, CheckCircle2, Compass, HeartHandshake, Home, Mail, MapPin, PawPrint, Stethoscope, Warehouse } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { addPet, getPets, updateContact, uploadAvatar } from "@/lib/db";
-import { compressImage } from "@/lib/images";
+import { auth } from "@/lib/firebase";
+import { addPet, avatarValue, getPets, updateContact } from "@/lib/db";
+import { compressToBase64 } from "@/lib/images";
 import { HYD_CITY, isHydArea, locationLabel } from "@/lib/hyderabad";
+import { toE164 } from "@/lib/phone";
 import { isOrgRole, type Pet, type Role, type UserProfile } from "@/lib/types";
 import { PET_EMOJI } from "@/lib/constants";
 import { cn } from "@/lib/cn";
 import RequireAuth from "@/components/RequireAuth";
 import AreaSelect from "@/components/AreaSelect";
 import PetForm from "@/components/PetForm";
-import PhoneOtp from "@/components/PhoneOtp";
 import PhotoField from "@/components/PhotoField";
 import KycForm from "@/components/KycForm";
 import OrgSettingsForm from "@/components/OrgSettingsForm";
@@ -58,7 +59,7 @@ export default function OnboardingPage() {
 }
 
 function Onboarding() {
-  const { profile, user, saveProfile, phoneNumber, refreshUser } = useAuth();
+  const { profile, user, saveProfile, phoneNumber, verified, sendVerification, refreshUser } = useAuth();
   const router = useRouter();
   const toast = useToast();
   const [step, setStep] = useState<Step>(() => initialStep(profile));
@@ -70,6 +71,8 @@ function Onboarding() {
   const [area, setArea] = useState(isHydArea(profile?.area) ? (profile?.area ?? "") : "");
   const [photo, setPhoto] = useState<File | null>(null);
   const [bio, setBio] = useState(profile?.bio ?? "");
+  // Their mobile number is a private contact detail for during a stay. Not shown on the profile.
+  const [mobile, setMobile] = useState(phoneNumber ? phoneNumber.replace(/^\+91/, "") : "");
   const [pets, setPets] = useState<Pet[]>([]);
   const [addingPet, setAddingPet] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -125,11 +128,13 @@ function Onboarding() {
       if (bio.trim().length < 30) return setError("Tell parents a little about yourself and your home (at least a couple of sentences).");
       if (!photo && !hasOwnPhoto(profile?.photoURL)) return setError("Add a clear photo of your face. Pet parents choose sitters they can see.");
     }
-    if (needsPerson && !phoneNumber) return setError("Verify your mobile number first.");
+    if (needsPerson && !verified) return setError("Confirm your email first.");
+    const phone = needsPerson ? toE164("+91", mobile) : null;
+    if (phone && "error" in phone) return setError(phone.error);
     setBusy(true);
     try {
       let photoURL: string | undefined;
-      if (photo) photoURL = await uploadAvatar(user.uid, await compressImage(photo, 800, 0.85));
+      if (photo) photoURL = avatarValue(await compressToBase64(photo, "avatar"));
       await saveProfile({
         displayName: name,
         area,
@@ -140,8 +145,8 @@ function Onboarding() {
       // A private record that they're an adult and accepted the terms (DPDP treats under-18s specially).
       await updateContact(user.uid, {
         terms: { version: 1, over18: true, at: new Date().toISOString() },
-        // The number they just verified. Never shown on their public profile.
-        ...(needsPerson && phoneNumber ? { phone: phoneNumber } : {}),
+        // Never shown on their public profile.
+        ...(phone && "phone" in phone ? { phone: phone.phone } : {}),
       });
       setStep("details");
     } catch (err) {
@@ -215,32 +220,63 @@ function Onboarding() {
         </section>
       )}
 
-      {step === "about" && person && !phoneNumber && user && (
+      {step === "about" && person && !verified && user && (
         <section className="animate-rise space-y-5">
           <div>
-            <h1 className="font-display text-[30px] leading-tight text-bark">Verify your mobile number</h1>
+            <h1 className="font-display text-[30px] leading-tight text-bark">Confirm your email</h1>
             <p className="mt-2 text-bark-soft">
-              Every CarePaws account belongs to a real person. {role === "sitter" ? "Pet parents and CarePaws reach you on this number during a stay." : "Sitters and CarePaws can reach you on this number during a stay."} It is never shown on your profile.
+              Every CarePaws account belongs to a real person. We sent a link to <span className="font-semibold text-bark">{user.email}</span>. Open it, then come back here.
             </p>
           </div>
           <div className="flex gap-3 rounded-2xl bg-oat/60 p-4 text-sm text-bark-soft">
-            <Smartphone className="h-5 w-5 shrink-0 text-moss" />
-            <p>Use an Indian mobile number. Each number can be used on one account.</p>
+            <Mail className="h-5 w-5 shrink-0 text-moss" />
+            <p>Can’t find it? Check your spam folder. The link works for a few hours.</p>
           </div>
-          <PhoneOtp
-            mode="link"
-            submitLabel="Verify number"
-            onDone={async () => {
-              await refreshUser();
+          <ErrorNote>{error}</ErrorNote>
+          <Button
+            type="button"
+            size="lg"
+            block
+            loading={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError("");
+              try {
+                await refreshUser();
+                if (!auth().currentUser?.emailVerified) setError("Not confirmed yet. Open the email and tap the link, then try again.");
+              } catch {
+                setError("Couldn’t check. Check your connection and try again.");
+              } finally {
+                setBusy(false);
+              }
             }}
-          />
+          >
+            I’ve confirmed it
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            block
+            disabled={busy}
+            onClick={async () => {
+              setError("");
+              try {
+                await sendVerification();
+                toast("Sent again. Check your inbox.");
+              } catch (e) {
+                setError((e as { code?: string }).code === "auth/too-many-requests" ? "Too many requests. Wait a few minutes, then try again." : "Couldn’t send the email. Try again shortly.");
+              }
+            }}
+          >
+            Send the email again
+          </Button>
           <Button type="button" variant="ghost" block onClick={() => setStep("role")}>
             Back
           </Button>
         </section>
       )}
 
-      {step === "about" && (!person || phoneNumber) && (
+      {step === "about" && (!person || verified) && (
         <form onSubmit={saveAbout} className="animate-rise space-y-4">
           <h1 className="font-display text-[30px] leading-tight text-bark">{isOrgRole(role) ? "About your organisation" : "A little about you"}</h1>
           <p className="!mt-2 text-bark-soft">
@@ -250,9 +286,9 @@ function Onboarding() {
                 ? "Pet parents read this before they book."
                 : "Sitters see this when you request a stay."}
           </p>
-          {person && phoneNumber && (
+          {person && (
             <div className="flex items-center gap-2 rounded-2xl bg-moss-tint px-4 py-3 text-sm font-semibold text-moss">
-              <CheckCircle2 className="h-5 w-5" /> {phoneNumber} verified
+              <CheckCircle2 className="h-5 w-5" /> {phoneNumber ?? user?.email} confirmed
             </div>
           )}
           {role === "sitter" && (
@@ -268,6 +304,14 @@ function Onboarding() {
           <Field label={isOrgRole(role) ? "Organisation name" : "Name"}>
             <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} required minLength={2} maxLength={60} autoComplete="name" />
           </Field>
+          {person && !phoneNumber && (
+            <Field label="Mobile number" hint={role === "sitter" ? "Pet parents and CarePaws reach you on it during a stay. Never shown on your profile." : "Sitters and CarePaws reach you on it during a stay. Never shown on your profile."}>
+              <div className="flex gap-2">
+                <span className="flex h-12 items-center rounded-2xl border border-oat-deep bg-oat px-4 text-bark-soft">+91</span>
+                <Input value={mobile} onChange={(e) => setMobile(e.target.value)} inputMode="numeric" autoComplete="tel-national" placeholder="98765 43210" maxLength={13} required />
+              </div>
+            </Field>
+          )}
           <AreaSelect
             value={area}
             onChange={setArea}

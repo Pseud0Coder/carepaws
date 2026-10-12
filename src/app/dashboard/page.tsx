@@ -22,12 +22,15 @@ import {
   Wallet,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { addPet, deleteMyAccount, deletePet, getPets, getSitter, getVouchesByOrg, subscribeBookings, updatePet, uploadAvatar, withdrawVouch } from "@/lib/db";
+import { addPet, deleteMyAccount, getContact, updateContact, deletePet, getPets, getSitter, getVouchesByOrg, subscribeBookings, updatePet, avatarValue, withdrawVouch } from "@/lib/db";
 import { isOrgRole, type Booking, type Pet, type SitterProfile, type UserProfile, type Vouch } from "@/lib/types";
 import { PET_EMOJI, PLATFORM_FEE_RATE, ROLE_LABEL } from "@/lib/constants";
+import { ONLINE_PAYMENTS } from "@/lib/config";
 import { formatINR } from "@/lib/format";
 import { isHydArea, locationLabel } from "@/lib/hyderabad";
 import { getThemePref, setThemePref, type ThemePref } from "@/lib/theme";
+import { compressToBase64 } from "@/lib/images";
+import { toE164 } from "@/lib/phone";
 import { cn } from "@/lib/cn";
 import Avatar from "@/components/Avatar";
 import AreaSelect from "@/components/AreaSelect";
@@ -159,7 +162,8 @@ function Earnings({ uid }: { uid: string }) {
     return { months, total, pendingPayout };
   }, [bookings]);
 
-  const net = (n: number) => Math.round(n * (1 - PLATFORM_FEE_RATE));
+  // Paid directly, CarePaws takes no cut. With in-app payments, the platform fee comes off.
+  const net = (n: number) => (ONLINE_PAYMENTS ? Math.round(n * (1 - PLATFORM_FEE_RATE)) : n);
   const max = Math.max(1, ...months.map(([, m]) => m.gross));
 
   return (
@@ -171,7 +175,9 @@ function Earnings({ uid }: { uid: string }) {
         </p>
         <p className="mt-2 font-display text-[34px] leading-none">{formatINR(net(total))}</p>
         <p className="mt-2 text-sm opacity-80">
-          after the {PLATFORM_FEE_RATE * 100}% platform fee · {formatINR(net(pendingPayout))} on upcoming paid stays
+          {ONLINE_PAYMENTS
+            ? `after the ${PLATFORM_FEE_RATE * 100}% platform fee · ${formatINR(net(pendingPayout))} on upcoming paid stays`
+            : `paid to you directly, with no CarePaws fee · ${formatINR(pendingPayout)} received on upcoming stays`}
         </p>
       </div>
       {months.length > 0 && (
@@ -296,6 +302,7 @@ function EditDetails({ profile, onDone }: { profile: UserProfile; onDone: () => 
   const { saveProfile, phoneNumber } = useAuth();
   const toast = useToast();
   const [displayName, setName] = useState(profile.displayName);
+  const [mobile, setMobile] = useState("");
   const [area, setArea] = useState(isHydArea(profile.area) ? (profile.area ?? "") : "");
   const [bio, setBio] = useState(profile.bio ?? "");
   const [saving, setSaving] = useState(false);
@@ -303,12 +310,20 @@ function EditDetails({ profile, onDone }: { profile: UserProfile; onDone: () => 
 
   const org = isOrgRole(profile.role);
 
+  useEffect(() => {
+    if (org) return;
+    getContact(profile.uid).then((c) => setMobile((c?.phone ?? "").replace(/^\+91/, ""))).catch(() => {});
+  }, [org, profile.uid]);
+
   async function save(e: FormEvent) {
     e.preventDefault();
     if (!isHydArea(area)) return setError("Choose your neighbourhood in Hyderabad.");
+    const phone = org || phoneNumber ? null : toE164("+91", mobile);
+    if (phone && "error" in phone) return setError(phone.error);
     setSaving(true);
     setError("");
     try {
+      if (phone && "phone" in phone) await updateContact(profile.uid, { phone: phone.phone });
       await saveProfile({ displayName: displayName.trim(), area, location: locationLabel(area), bio: bio.trim() });
       toast("Profile saved.");
       onDone();
@@ -329,6 +344,14 @@ function EditDetails({ profile, onDone }: { profile: UserProfile; onDone: () => 
         <p className="rounded-2xl bg-moss-tint px-4 py-3 text-sm font-semibold text-moss">
           Mobile {phoneNumber} is verified. Only you and the people you book with can reach you on it.
         </p>
+      )}
+      {!org && !phoneNumber && (
+        <Field label="Mobile number" hint="Only you and the people you book with can see it.">
+          <div className="flex gap-2">
+            <span className="flex h-12 items-center rounded-2xl border border-oat-deep bg-oat px-4 text-bark-soft">+91</span>
+            <Input value={mobile} onChange={(e) => setMobile(e.target.value)} inputMode="numeric" autoComplete="tel-national" maxLength={13} required />
+          </div>
+        </Field>
       )}
       <Field label="Bio">
         <TextArea value={bio} onChange={(e) => setBio(e.target.value)} maxLength={600} />
@@ -389,10 +412,10 @@ function DeleteAccountSheet({ open, onClose }: { open: boolean; onClose: () => v
         <div className="space-y-4">
           <div className="space-y-2 text-sm text-bark-soft">
             <p>
-              <span className="font-semibold text-bark">Deleted:</span> your profile, phone and email, pets, identity documents, photos, vouches, and your block list.
+              <span className="font-semibold text-bark">Deleted:</span> your profile, phone and email, pets, identity documents, photos, posts, vouches you gave, and your block list.
             </p>
             <p>
-              <span className="font-semibold text-bark">Kept, without your name or photo:</span> past bookings and payments (for accounting and disputes), reviews and posts you wrote, and messages you sent, which remain visible to the people you sent them to.
+              <span className="font-semibold text-bark">Kept, without your name or photo:</span> past bookings (for disputes and records), reviews and comments you wrote, and messages you sent, which remain visible to the people you sent them to.
             </p>
             <p className="rounded-2xl bg-ember-tint px-4 py-3 text-bark">This can’t be undone.</p>
           </div>
@@ -454,11 +477,9 @@ function You({ profile }: { profile: UserProfile }) {
   async function onPhoto(file?: File) {
     if (!file) return;
     if (!file.type.startsWith("image/")) return toast("Choose an image file.", "error");
-    if (file.size > 5 * 1024 * 1024) return toast("Photos must be under 5 MB.", "error");
     setUploading(true);
     try {
-      const url = await uploadAvatar(profile.uid, file);
-      await saveProfile({ photoURL: `${url}` });
+      await saveProfile({ photoURL: avatarValue(await compressToBase64(file, "avatar")) });
       toast("Photo updated.");
     } catch {
       toast("Upload failed.", "error");

@@ -3,7 +3,6 @@
 import { readFileSync } from "node:fs";
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { ref, uploadBytes, getBytes } from "firebase/storage";
 import {
   assertFails,
   assertSucceeds,
@@ -19,6 +18,7 @@ import {
   updateDoc,
   writeBatch,
   collection,
+  collectionGroup,
   deleteDoc,
   getDocs,
   query,
@@ -110,7 +110,10 @@ function booking(over = {}) {
 const omit = (o, ...keys) => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
 const PHONE = "+919876543210";
 const as = (uid) => env.authenticatedContext(uid, { phone_number: PHONE }).firestore();
-const asNoPhone = (uid) => env.authenticatedContext(uid).firestore();
+// Signed in with a confirmed email (Google accounts, and email accounts after tapping the link).
+const asEmail = (uid) => env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: true }).firestore();
+// Signed in, but nothing confirmed yet.
+const asNoPhone = (uid) => env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: false }).firestore();
 const anon = () => env.unauthenticatedContext().firestore();
 
 async function seed(fn) {
@@ -121,7 +124,6 @@ before(async () => {
   env = await initializeTestEnvironment({
     projectId: "demo-carepaws",
     firestore: { rules: readFileSync("firestore.rules", "utf8") },
-    storage: { rules: readFileSync("storage.rules", "utf8") },
   });
 });
 
@@ -129,7 +131,6 @@ after(async () => env?.cleanup());
 
 beforeEach(async () => {
   await env.clearFirestore();
-  await env.clearStorage();
   await seed(async (db) => {
     await setDoc(doc(db, "kyc/sitter1"), { status: "approved" });
     await setDoc(doc(db, "users/sitter1"), sitter);
@@ -164,12 +165,25 @@ describe("users", () => {
     await assertFails(setDoc(doc(as("new2"), "users/new2"), { ...p, uid: "new2", verified: true }));
     await assertFails(setDoc(doc(as("new3"), "users/someoneelse"), { ...p, uid: "someoneelse" }));
   });
-  test("a parent or sitter can't finish onboarding without a verified phone number", async () => {
+  test("a parent or sitter can't finish onboarding until their email or phone is confirmed", async () => {
     const draft = { uid: "np1", displayName: "No Phone", photoURL: null, role: "parent", onboarded: false };
+    const done = { onboarded: true, area: "Madhapur", location: "Madhapur, Hyderabad" };
     await assertSucceeds(setDoc(doc(asNoPhone("np1"), "users/np1"), draft));
-    await assertFails(updateDoc(doc(asNoPhone("np1"), "users/np1"), { onboarded: true, area: "Madhapur", location: "Madhapur, Hyderabad" }));
-    // The same person succeeds once the number is verified (it shows up in their sign-in token).
-    await assertSucceeds(updateDoc(doc(as("np1"), "users/np1"), { onboarded: true, area: "Madhapur", location: "Madhapur, Hyderabad" }));
+    await assertFails(updateDoc(doc(asNoPhone("np1"), "users/np1"), done));
+    // Once the email is confirmed (it shows up in their sign-in token) they can finish.
+    await assertSucceeds(updateDoc(doc(asEmail("np1"), "users/np1"), done));
+  });
+  test("a confirmed phone number works just as well as a confirmed email", async () => {
+    const draft = { uid: "np2", displayName: "Phone Person", photoURL: null, role: "parent", onboarded: false };
+    await assertSucceeds(setDoc(doc(as("np2"), "users/np2"), draft));
+    await assertSucceeds(updateDoc(doc(as("np2"), "users/np2"), { onboarded: true, area: "Madhapur", location: "Madhapur, Hyderabad" }));
+  });
+  test("a profile photo is a link, or a small JPEG kept in the profile", async () => {
+    await assertSucceeds(updateDoc(doc(as("parent1"), "users/parent1"), { photoURL: "https://lh3.googleusercontent.com/a/photo" }));
+    await assertSucceeds(updateDoc(doc(as("parent1"), "users/parent1"), { photoURL: "data:image/jpeg;base64," + "A".repeat(20000) }));
+    await assertFails(updateDoc(doc(as("parent1"), "users/parent1"), { photoURL: "data:image/jpeg;base64," + "A".repeat(40001) }));
+    await assertFails(updateDoc(doc(as("parent1"), "users/parent1"), { photoURL: "data:text/html;base64,PHNjcmlwdD4=" }));
+    await assertFails(updateDoc(doc(as("parent1"), "users/parent1"), { photoURL: "javascript:alert(1)//" + "a".repeat(2100) }));
   });
   test("onboarding needs a Hyderabad neighbourhood from the list", async () => {
     const draft = { uid: "ar1", displayName: "Area Test", photoURL: null, role: "parent", onboarded: false };
@@ -242,16 +256,39 @@ describe("bookings", () => {
     test("price cannot be edited after creation", async () => {
       await assertFails(updateDoc(doc(as("parent1"), "bookings/b1"), { totalPrice: 1 }));
     });
-    test("a paid stay cannot be cancelled or completed early", async () => {
-      await seed((db) => updateDoc(doc(db, "bookings/b1"), { status: "confirmed", paymentStatus: "paid" }));
-      await assertFails(updateDoc(doc(as("parent1"), "bookings/b1"), { status: "cancelled" }));
-      await assertFails(updateDoc(doc(as("sitter1"), "bookings/b1"), { status: "completed" }));
+    test("a confirmed stay can be cancelled by either side, but not completed early", async () => {
+      await seed((db) => updateDoc(doc(db, "bookings/b1"), { status: "confirmed" }));
+      await assertFails(updateDoc(doc(as("sitter1"), "bookings/b1"), { status: "completed" })); // hasn't ended
+      await assertFails(updateDoc(doc(as("parent2"), "bookings/b1"), { status: "cancelled" }));
+      await assertSucceeds(updateDoc(doc(as("parent1"), "bookings/b1"), { status: "cancelled" }));
     });
-    test("an unpaid stay cannot be completed", async () => {
+    test("the sitter completes a stay once it has ended, and only the sitter", async () => {
       await seed((db) => updateDoc(doc(db, "bookings/b1"), { status: "confirmed", startDate: day(-5), endDate: day(-1) }));
-      await assertFails(updateDoc(doc(as("sitter1"), "bookings/b1"), { status: "completed" }));
-      await seed((db) => updateDoc(doc(db, "bookings/b1"), { paymentStatus: "paid" }));
+      await assertFails(updateDoc(doc(as("parent1"), "bookings/b1"), { status: "completed" }));
       await assertSucceeds(updateDoc(doc(as("sitter1"), "bookings/b1"), { status: "completed" }));
+    });
+    test("the sitter records a direct payment, once, and nobody else can", async () => {
+      const paid = { paymentStatus: "paid", paymentMethod: "direct", paidAt: serverTimestamp() };
+      await assertFails(updateDoc(doc(as("sitter1"), "bookings/b1"), paid)); // not accepted yet
+      await seed((db) => updateDoc(doc(db, "bookings/b1"), { status: "confirmed" }));
+      await assertFails(updateDoc(doc(as("parent1"), "bookings/b1"), paid));
+      await assertFails(updateDoc(doc(as("sitter1"), "bookings/b1"), { ...paid, paymentMethod: "razorpay" }));
+      await assertFails(updateDoc(doc(as("sitter1"), "bookings/b1"), { ...paid, totalPrice: 1 }));
+      await assertSucceeds(updateDoc(doc(as("sitter1"), "bookings/b1"), paid));
+      await assertFails(updateDoc(doc(as("sitter1"), "bookings/b1"), paid)); // already paid
+    });
+    test("deleting an account wipes the person's details from finished bookings only", async () => {
+      const wipe = {
+        parentName: "Deleted user", parentPhoto: null, notes: "", petNotes: "",
+        "declarations.emergencyContactName": "", "declarations.emergencyContactPhone": "",
+      };
+      await assertFails(updateDoc(doc(as("parent1"), "bookings/b1"), wipe)); // still pending
+      await seed((db) => updateDoc(doc(db, "bookings/b1"), { status: "cancelled" }));
+      await assertFails(updateDoc(doc(as("parent2"), "bookings/b1"), wipe));
+      await assertFails(updateDoc(doc(as("parent1"), "bookings/b1"), { ...wipe, totalPrice: 1 }));
+      await assertFails(updateDoc(doc(as("parent1"), "bookings/b1"), { ...wipe, parentName: "Someone Else" }));
+      await assertSucceeds(updateDoc(doc(as("parent1"), "bookings/b1"), wipe));
+      await assertSucceeds(updateDoc(doc(as("sitter1"), "bookings/b1"), { sitterName: "Deleted user", sitterPhoto: null }));
     });
   });
 });
@@ -501,9 +538,9 @@ describe("sitter KYC", () => {
     pincode: "500032",
     emergencyName: "Raj Sitter",
     emergencyPhone: "+91 00000 00007",
-    idFront: "kyc/ns1/id-front.jpg",
-    idBack: "kyc/ns1/id-back.jpg",
-    selfie: "kyc/ns1/selfie.jpg",
+    idFront: "kyc/ns1/id-front",
+    idBack: "kyc/ns1/id-back",
+    selfie: "kyc/ns1/selfie",
     hasPoliceCert: false,
     declarations: {
       version: 1, honestProfile: true, safeHome: true, ownPetsDisclosed: true, noUnattended: true,
@@ -514,8 +551,18 @@ describe("sitter KYC", () => {
     submittedAt: serverTimestamp(),
     ...over,
   });
-  beforeEach(() => seed((db) => setDoc(doc(db, "users/ns1"), newSitter)));
+  const photo = { b64: "A".repeat(2000), createdAt: new Date() };
+  beforeEach(() =>
+    seed(async (db) => {
+      await setDoc(doc(db, "users/ns1"), newSitter);
+      // The photos are saved before the case.
+      for (const n of ["id-front", "id-back", "selfie"]) await setDoc(doc(db, `kyc/ns1/files/${n}`), photo);
+    })
+  );
 
+  test("a sitter with a confirmed email can submit a complete case, and read it back", async () => {
+    await assertSucceeds(setDoc(doc(asEmail("ns1"), "kyc/ns1"), caseDoc()));
+  });
   test("a sitter with a verified phone can submit a complete case, and read it back", async () => {
     await assertSucceeds(setDoc(doc(withPhone("ns1"), "kyc/ns1"), caseDoc()));
     await assertSucceeds(getDoc(doc(withPhone("ns1"), "kyc/ns1")));
@@ -526,7 +573,7 @@ describe("sitter KYC", () => {
     await assertFails(getDoc(doc(anon(), "kyc/ns1")));
     await assertFails(getDoc(doc(as("sitter1"), "kyc/ns1")));
   });
-  test("needs a verified mobile number", async () => {
+  test("needs a confirmed email or mobile number", async () => {
     await assertFails(setDoc(doc(asNoPhone("ns1"), "kyc/ns1"), caseDoc()));
   });
   test("must be an adult, with a 4-character ID tail, valid pincode and a selfie", async () => {
@@ -539,14 +586,16 @@ describe("sitter KYC", () => {
     await assertFails(setDoc(doc(db, "kyc/ns1"), omit(caseDoc(), "selfie")));
   });
   test("files must be the sitter's own", async () => {
-    await assertFails(setDoc(doc(withPhone("ns1"), "kyc/ns1"), caseDoc({ idFront: "kyc/someone-else/id-front.jpg" })));
+    await assertFails(setDoc(doc(withPhone("ns1"), "kyc/ns1"), caseDoc({ idFront: "kyc/someone-else/id-front" })));
   });
   test("PAN has no address, so it needs an address proof", async () => {
     const db = withPhone("ns1");
     const pan = { idType: "pan", idLast4: "234F" };
     const noBack = omit(caseDoc(pan), "idBack");
     await assertFails(setDoc(doc(db, "kyc/ns1"), noBack));
-    await assertSucceeds(setDoc(doc(db, "kyc/ns1"), { ...noBack, addressProof: "kyc/ns1/address-proof.jpg" }));
+    await assertFails(setDoc(doc(db, "kyc/ns1"), { ...noBack, addressProof: "kyc/ns1/address-proof" })); // the photo was never saved
+    await seed((d) => setDoc(doc(d, "kyc/ns1/files/address-proof"), photo));
+    await assertSucceeds(setDoc(doc(db, "kyc/ns1"), { ...noBack, addressProof: "kyc/ns1/address-proof" }));
   });
   test("an ID that has a back side needs it", async () => {
     await assertFails(setDoc(doc(withPhone("ns1"), "kyc/ns1"), omit(caseDoc(), "idBack")));
@@ -565,7 +614,7 @@ describe("sitter KYC", () => {
   });
   test("a non-sitter can't open a case", async () => {
     await seed((db) => setDoc(doc(db, "users/ns2"), { ...newSitter, uid: "ns2", role: "parent" }));
-    await assertFails(setDoc(doc(withPhone("ns2"), "kyc/ns2"), caseDoc({ idFront: "kyc/ns2/id-front.jpg", idBack: "kyc/ns2/id-back.jpg", selfie: "kyc/ns2/selfie.jpg" })));
+    await assertFails(setDoc(doc(withPhone("ns2"), "kyc/ns2"), caseDoc({ idFront: "kyc/ns2/id-front", idBack: "kyc/ns2/id-back", selfie: "kyc/ns2/selfie" })));
   });
   test("a rejected case can be fixed and resubmitted; open and approved ones are frozen", async () => {
     await seed((db) => setDoc(doc(db, "kyc/ns1"), { ...caseDoc(), status: "rejected", reason: "Selfie too dark", submittedAt: new Date(), consentAt: new Date() }));
@@ -595,32 +644,40 @@ describe("sitter KYC", () => {
   });
 });
 
-describe("KYC document storage", () => {
-  const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
-  const st = (uid) => env.authenticatedContext(uid).storage();
-  const put = (uid, path, type = "image/jpeg", data = bytes) => uploadBytes(ref(st(uid), path), data, { contentType: type });
+describe("KYC document photos", () => {
+  const newSitter = { uid: "ns1", displayName: "New Sitter", photoURL: null, role: "sitter", onboarded: false };
+  const photo = (over = {}) => ({ b64: "A".repeat(5000), createdAt: serverTimestamp(), ...over });
+  const put = (uid, name = "id-front", data = photo()) => setDoc(doc(as(uid), `kyc/ns1/files/${name}`), data);
+  beforeEach(() => seed((db) => setDoc(doc(db, "users/ns1"), newSitter)));
 
-  test("the owner can upload documents but never read them back", async () => {
-    await assertSucceeds(put("ns1", "kyc/ns1/id-front.jpg"));
-    await assertSucceeds(put("ns1", "kyc/ns1/address-proof.pdf", "application/pdf"));
-    await assertFails(getBytes(ref(st("ns1"), "kyc/ns1/id-front.jpg")));
+  test("the owner can save documents but never read them back", async () => {
+    await assertSucceeds(put("ns1"));
+    await assertSucceeds(put("ns1", "address-proof"));
+    await assertFails(getDoc(doc(as("ns1"), "kyc/ns1/files/id-front")));
+    await assertFails(getDocs(collection(as("ns1"), "kyc/ns1/files")));
   });
-  test("nobody else can upload to or read someone's folder", async () => {
-    await assertFails(put("parent1", "kyc/ns1/id-front.jpg"));
-    await assertFails(uploadBytes(ref(env.unauthenticatedContext().storage(), "kyc/ns1/id-front.jpg"), bytes, { contentType: "image/jpeg" }));
-    await env.withSecurityRulesDisabled(async (c) => uploadBytes(ref(c.storage(), "kyc/ns1/selfie.jpg"), bytes, { contentType: "image/jpeg" }));
-    await assertFails(getBytes(ref(st("parent1"), "kyc/ns1/selfie.jpg")));
+  test("nobody else can save to or read someone's documents", async () => {
+    await assertFails(put("parent1"));
+    await assertFails(setDoc(doc(anon(), "kyc/ns1/files/id-front"), photo()));
+    await seed((db) => setDoc(doc(db, "kyc/ns1/files/selfie"), { b64: "A".repeat(5000), createdAt: new Date() }));
+    await assertFails(getDoc(doc(as("parent1"), "kyc/ns1/files/selfie")));
   });
-  test("only expected file names, types and sizes", async () => {
-    await assertFails(put("ns1", "kyc/ns1/anything.jpg"));
-    await assertFails(put("ns1", "kyc/ns1/selfie.jpg", "text/html"));
-    await assertFails(put("ns1", "kyc/ns1/selfie.jpg", "image/jpeg", new Uint8Array(9 * 1024 * 1024)));
+  test("only expected names, and sizes", async () => {
+    await assertFails(put("ns1", "anything"));
+    await assertFails(put("ns1", "selfie", photo({ b64: "A".repeat(750001) })));
+    await assertFails(put("ns1", "selfie", photo({ b64: "tiny" })));
+    await assertFails(put("ns1", "selfie", photo({ extra: "x" })));
+    await assertSucceeds(put("ns1", "selfie", photo({ b64: "A".repeat(750000) })));
   });
-  test("approved documents can't be swapped out; rejected cases can re-upload", async () => {
+  test("only sitters save documents", async () => {
+    await seed((db) => setDoc(doc(db, "users/ns2"), { ...newSitter, uid: "ns2", role: "parent" }));
+    await assertFails(setDoc(doc(as("ns2"), "kyc/ns2/files/selfie"), photo()));
+  });
+  test("approved documents can't be swapped out; rejected cases can re-save", async () => {
     await seed((db) => setDoc(doc(db, "kyc/ns1"), { status: "approved" }));
-    await assertFails(put("ns1", "kyc/ns1/id-front.jpg"));
+    await assertFails(put("ns1"));
     await seed((db) => setDoc(doc(db, "kyc/ns1"), { status: "rejected" }));
-    await assertSucceeds(put("ns1", "kyc/ns1/id-front.jpg"));
+    await assertSucceeds(put("ns1"));
   });
 });
 
@@ -692,11 +749,14 @@ describe("stay log", () => {
     );
   const entry = (over = {}) => ({ authorId: "sitter1", authorRole: "sitter", kind: "update", text: "Bruno ate well and had a long walk.", photos: [], createdAt: serverTimestamp(), ...over });
   const add = (uid, data) => setDoc(doc(as(uid), "bookings/b1/log/e" + Math.random().toString(36).slice(2, 8)), data);
-  beforeEach(paidStay);
+  beforeEach(async () => {
+    await paidStay();
+    await seed((db) => setDoc(doc(db, "bookings/b1/photos/abcdef12"), { authorId: "sitter1", b64: "A".repeat(500), createdAt: new Date() }));
+  });
 
   test("the sitter posts daily updates; the parent can read them", async () => {
     await assertSucceeds(add("sitter1", entry()));
-    await assertSucceeds(add("sitter1", entry({ photos: ["stays/b1/abcdef12.jpg"], text: "" })));
+    await assertSucceeds(add("sitter1", entry({ photos: ["stays/b1/abcdef12"], text: "" })));
     const snap = await assertSucceeds(getDocs(collection(as("parent1"), "bookings/b1/log")));
     assert.equal(snap.size, 2);
   });
@@ -715,8 +775,9 @@ describe("stay log", () => {
     await assertFails(add("sitter1", entry({ authorId: "parent1" })));
     await assertFails(add("sitter1", entry({ authorRole: "parent" })));
     await assertFails(add("sitter1", entry({ text: "", photos: [] })));
-    await assertFails(add("sitter1", entry({ photos: ["stays/b1/a1.jpg", "stays/b1/a2.jpg", "stays/b1/a3.jpg", "stays/b1/a4.jpg", "stays/b1/a5.jpg"] })));
-    await assertFails(add("sitter1", entry({ photos: ["stays/other/abcdef12.jpg"] })));
+    await assertFails(add("sitter1", entry({ photos: Array(5).fill("stays/b1/abcdef12") })));
+    await assertFails(add("sitter1", entry({ photos: ["stays/other/abcdef12"] })));
+    await assertFails(add("sitter1", entry({ photos: ["stays/b1/neversaved"] }))); // the photo must really exist
     await assertFails(add("sitter1", entry({ createdAt: new Date("2020-01-01") })));
   });
   test("entries are permanent: no edits, no deletes", async () => {
@@ -725,35 +786,39 @@ describe("stay log", () => {
     await assertFails(updateDoc(ref2, { text: "Changed my story" }));
     await assertFails(deleteDoc(ref2));
   });
-  test("only while a stay is paid and on", async () => {
+  test("only while a stay is on, whether or not the sitter has marked it paid", async () => {
     await seed((db) => updateDoc(doc(db, "bookings/b1"), { paymentStatus: "pending" }));
+    await assertSucceeds(add("sitter1", entry()));
+    await seed((db) => updateDoc(doc(db, "bookings/b1"), { status: "cancelled" }));
     await assertFails(add("sitter1", entry()));
-    await seed((db) => updateDoc(doc(db, "bookings/b1"), { paymentStatus: "paid", status: "cancelled" }));
+    await seed((db) => updateDoc(doc(db, "bookings/b1"), { status: "pending" }));
     await assertFails(add("sitter1", entry()));
   });
 });
 
-describe("stay photos storage", () => {
-  const jpg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
-  const st = (uid) => env.authenticatedContext(uid).storage();
-  const put = (uid, name = "photo1234.jpg", type = "image/jpeg") => uploadBytes(ref(st(uid), `stays/b1/${name}`), jpg, { contentType: type });
-  beforeEach(() => seed((db) => setDoc(doc(db, "bookings/b1"), { ...booking(), status: "confirmed", paymentStatus: "paid", createdAt: new Date(), updatedAt: new Date(), declarations: { ...declarations(), acceptedAt: new Date() } })));
+describe("stay photos", () => {
+  const photo = (over = {}) => ({ authorId: "sitter1", b64: "A".repeat(5000), createdAt: serverTimestamp(), ...over });
+  const put = (uid, id = "photo1234", data = photo({ authorId: uid })) => setDoc(doc(as(uid), `bookings/b1/photos/${id}`), data);
+  beforeEach(() => seed((db) => setDoc(doc(db, "bookings/b1"), { ...booking(), status: "confirmed", paymentStatus: "pending", createdAt: new Date(), updatedAt: new Date(), declarations: { ...declarations(), acceptedAt: new Date() } })));
 
   test("only the two parties can add or view photos", async () => {
     await assertSucceeds(put("sitter1"));
-    await assertSucceeds(put("parent1", "photo5678.jpg"));
-    await assertSucceeds(getBytes(ref(st("parent1"), "stays/b1/photo1234.jpg")));
-    await assertFails(put("parent2", "photo9999.jpg"));
-    await assertFails(getBytes(ref(st("parent2"), "stays/b1/photo1234.jpg")));
+    await assertSucceeds(put("parent1", "photo5678"));
+    await assertSucceeds(getDoc(doc(as("parent1"), "bookings/b1/photos/photo1234")));
+    await assertFails(put("parent2", "photo9999"));
+    await assertFails(getDoc(doc(as("parent2"), "bookings/b1/photos/photo1234")));
+    await assertFails(getDoc(doc(anon(), "bookings/b1/photos/photo1234")));
   });
-  test("photos must be small JPEGs", async () => {
-    // Overwriting is blocked in production by `allow update, delete: if false`; the Storage emulator
-    // treats every upload as a create, so it can't be asserted here.
-    await assertFails(put("sitter1", "photo4321.jpg", "text/html"));
-    await assertFails(uploadBytes(ref(st("sitter1"), "stays/b1/photo7777.jpg"), new Uint8Array(7 * 1024 * 1024), { contentType: "image/jpeg" }));
+  test("photos are small, honest about the author, and can't be replaced or removed", async () => {
+    await assertFails(put("sitter1", "photo4321", photo({ b64: "A".repeat(300001) })));
+    await assertFails(put("sitter1", "photo4321", photo({ authorId: "parent1" })));
+    await assertFails(put("sitter1", "x", photo())); // id too short
+    await assertSucceeds(put("sitter1"));
+    await assertFails(setDoc(doc(as("sitter1"), "bookings/b1/photos/photo1234"), photo({ b64: "B".repeat(500) })));
+    await assertFails(deleteDoc(doc(as("sitter1"), "bookings/b1/photos/photo1234")));
   });
-  test("not before the stay is paid", async () => {
-    await seed((db) => updateDoc(doc(db, "bookings/b1"), { paymentStatus: "pending" }));
+  test("only while the stay is on", async () => {
+    await seed((db) => updateDoc(doc(db, "bookings/b1"), { status: "pending" }));
     await assertFails(put("sitter1"));
   });
 });
@@ -795,5 +860,178 @@ describe("reports and blocking", () => {
     await assertFails(setDoc(doc(as("parent1"), "conversations/parent1_sitter1/messages/m2"), msg));
     // The blocker can still write to them (their own choice to engage).
     await assertSucceeds(setDoc(doc(as("sitter1"), "conversations/parent1_sitter1/messages/m3"), { ...msg, senderId: "sitter1" }));
+  });
+});
+
+// ─── Counters without Cloud Functions ─────────────────────────────────────
+// Ratings, completed stays and vouch counts are public and must not be fakeable. The app updates them in the same
+// batch as the thing they count, and the rules check the arithmetic.
+
+describe("ratings are folded in by the reviewer, and checked", () => {
+  const review = (rating = 5) => ({
+    sitterId: "sitter1", bookingId: "b1", authorId: "parent1", author: "Pat", authorPhoto: null,
+    rating, text: "Lovely stay, thank you!", petType: "Dog", helpfulBy: [], createdAt: serverTimestamp(),
+  });
+  beforeEach(() =>
+    seed((db) => setDoc(doc(db, "bookings/b1"), booking({ status: "completed", createdAt: new Date(), updatedAt: new Date(), declarations: { ...declarations(), acceptedAt: new Date() } })))
+  );
+  async function post(rating, patch, uid = "parent1") {
+    const db = as(uid);
+    const b = writeBatch(db);
+    b.set(doc(db, "reviews/b1"), { ...review(rating), authorId: uid });
+    b.update(doc(db, "users/sitter1"), patch);
+    return b.commit();
+  }
+
+  test("the first review sets the count, the sum and the average", async () => {
+    await assertSucceeds(post(5, { reviewCount: 1, ratingSum: 5, rating: 5, topRated: false, lastReview: "b1" }));
+    const sitter = (await getDoc(doc(anon(), "users/sitter1"))).data();
+    assert.equal(sitter.rating, 5);
+    assert.equal(sitter.reviewCount, 1);
+  });
+  test("later reviews must add up", async () => {
+    await seed((db) => updateDoc(doc(db, "users/sitter1"), { reviewCount: 2, ratingSum: 9, rating: 4.5 }));
+    await assertSucceeds(post(5, { reviewCount: 3, ratingSum: 14, rating: 4.7, topRated: false, lastReview: "b1" })); // 4.666…
+  });
+  test("a lie about the stars, the count, the average or the badge is refused", async () => {
+    await assertFails(post(2, { reviewCount: 1, ratingSum: 5, rating: 5, topRated: false, lastReview: "b1" })); // sum is not what was reviewed
+    await assertFails(post(5, { reviewCount: 2, ratingSum: 5, rating: 5, topRated: false, lastReview: "b1" })); // count jumps by two
+    await assertFails(post(5, { reviewCount: 1, ratingSum: 5, rating: 4, topRated: false, lastReview: "b1" })); // average is wrong
+    await assertFails(post(5, { reviewCount: 1, ratingSum: 5, rating: 5, topRated: true, lastReview: "b1" })); // badge needs 10 reviews
+    await assertFails(post(5, { reviewCount: 1, ratingSum: 5, rating: 5, topRated: false, lastReview: "b1", backgroundChecked: true }));
+  });
+  test("the totals can't move without a review being written in the same step", async () => {
+    await assertFails(updateDoc(doc(as("parent1"), "users/sitter1"), { reviewCount: 1, ratingSum: 5, rating: 5, topRated: false, lastReview: "b1" }));
+    await assertFails(updateDoc(doc(as("parent1"), "users/sitter1"), { reviewCount: 1, ratingSum: 5, rating: 5, topRated: false, lastReview: "nope" }));
+  });
+  test("sitters can't review or rate themselves, and a review can't be counted twice", async () => {
+    await assertFails(updateDoc(doc(as("sitter1"), "users/sitter1"), { reviewCount: 1, ratingSum: 5, rating: 5, topRated: false, lastReview: "b1" }));
+    await assertSucceeds(post(5, { reviewCount: 1, ratingSum: 5, rating: 5, topRated: false, lastReview: "b1" }));
+    await assertFails(post(5, { reviewCount: 2, ratingSum: 10, rating: 5, topRated: false, lastReview: "b1" }));
+  });
+  test("only the parent of that stay can add to a sitter's rating", async () => {
+    await assertFails(post(5, { reviewCount: 1, ratingSum: 5, rating: 5, topRated: false, lastReview: "b1" }, "parent2"));
+  });
+});
+
+describe("stays done are counted when the sitter completes them", () => {
+  beforeEach(() =>
+    seed((db) => setDoc(doc(db, "bookings/b1"), booking({ status: "confirmed", startDate: day(-5), endDate: day(-1), createdAt: new Date(), updatedAt: new Date(), declarations: { ...declarations(), acceptedAt: new Date() } })))
+  );
+  const complete = (count, id = "b1") => {
+    const db = as("sitter1");
+    const b = writeBatch(db);
+    b.update(doc(db, "bookings/b1"), { status: "completed", updatedAt: serverTimestamp() });
+    b.update(doc(db, "users/sitter1"), { completedStays: count, lastCompleted: id });
+    return b.commit();
+  };
+  test("completing a stay raises the count by exactly one", async () => {
+    await assertSucceeds(complete(1));
+  });
+  test("no inflating the count", async () => {
+    await assertFails(complete(5));
+    await assertFails(complete(1, "other"));
+    await assertFails(updateDoc(doc(as("sitter1"), "users/sitter1"), { completedStays: 1, lastCompleted: "b1" })); // booking not completed in this step
+  });
+  test("a stay can only be counted once", async () => {
+    await assertSucceeds(complete(1));
+    await seed((db) => updateDoc(doc(db, "users/sitter1"), { completedStays: 1 }));
+    await assertFails(updateDoc(doc(as("sitter1"), "users/sitter1"), { completedStays: 2, lastCompleted: "b1" }));
+  });
+  test("someone else can't raise a sitter's count", async () => {
+    await assertFails(updateDoc(doc(as("parent1"), "users/sitter1"), { completedStays: 1, lastCompleted: "b1" }));
+  });
+});
+
+describe("vouch counts move with the vouch", () => {
+  const vouch = { orgId: "vet1", orgName: "Test Vet Clinic", orgPhoto: null, orgType: "vet", sitterId: "sitter1", note: "Great.", createdAt: serverTimestamp() };
+  async function add(uid = "vet1", count = 1, id = "vet1_sitter1") {
+    const db = as(uid);
+    const b = writeBatch(db);
+    b.set(doc(db, `vouches/${id}`), vouch);
+    b.update(doc(db, "users/sitter1"), { vouchCount: count, lastVouch: id });
+    return b.commit();
+  }
+  test("a vouch raises the sitter's count by one", async () => {
+    await assertSucceeds(add());
+  });
+  test("a wrong count, a missing vouch, or someone else's vouch is refused", async () => {
+    await assertFails(add("vet1", 3));
+    await assertFails(updateDoc(doc(as("vet1"), "users/sitter1"), { vouchCount: 1, lastVouch: "vet1_sitter1" }));
+    await assertFails(add("parent1", 1, "parent1_sitter1"));
+    await assertFails(add("vet2", 1, "vet2_sitter1"));
+  });
+  test("withdrawing lowers it by one, and can't go below zero", async () => {
+    await seed(async (db) => {
+      await setDoc(doc(db, "vouches/vet1_sitter1"), { ...vouch, createdAt: new Date() });
+      await updateDoc(doc(db, "users/sitter1"), { vouchCount: 1 });
+    });
+    const db = as("vet1");
+    const bad = writeBatch(db);
+    bad.delete(doc(db, "vouches/vet1_sitter1"));
+    bad.update(doc(db, "users/sitter1"), { vouchCount: 5, lastVouch: "vet1_sitter1" });
+    await assertFails(bad.commit());
+    const ok = writeBatch(db);
+    ok.delete(doc(db, "vouches/vet1_sitter1"));
+    ok.update(doc(db, "users/sitter1"), { vouchCount: 0, lastVouch: "vet1_sitter1" });
+    await assertSucceeds(ok.commit());
+  });
+  test("an organisation keeps its name and photo in step on its vouches, and nothing else", async () => {
+    await seed(async (db) => {
+      await setDoc(doc(db, "vouches/vet1_sitter1"), { ...vouch, createdAt: new Date() });
+      await updateDoc(doc(db, "users/vet1"), { displayName: "Renamed Clinic" });
+    });
+    await assertSucceeds(updateDoc(doc(as("vet1"), "vouches/vet1_sitter1"), { orgName: "Renamed Clinic" }));
+    await assertFails(updateDoc(doc(as("vet1"), "vouches/vet1_sitter1"), { orgName: "Famous Hospital" }));
+  });
+});
+
+describe("deleting an account from the app", () => {
+  test("a person can delete their own profile and private data, and nobody else's", async () => {
+    await seed((db) => setDoc(doc(db, "users/parent1/private/contact"), { email: "p@x.com" }));
+    await assertFails(deleteDoc(doc(as("parent2"), "users/parent1")));
+    await assertSucceeds(deleteDoc(doc(as("parent1"), "users/parent1/private/contact")));
+    await assertSucceeds(deleteDoc(doc(as("parent1"), "users/parent1")));
+  });
+  test("the ID case can only be removed once the profile is gone", async () => {
+    await seed(async (db) => {
+      await setDoc(doc(db, "kyc/sitter1"), { status: "approved" });
+      await setDoc(doc(db, "kyc/sitter1/files/selfie"), { b64: "A".repeat(500), createdAt: new Date() });
+    });
+    await assertFails(deleteDoc(doc(as("sitter1"), "kyc/sitter1")));
+    await assertFails(deleteDoc(doc(as("sitter1"), "kyc/sitter1/files/selfie")));
+    await assertSucceeds(deleteDoc(doc(as("sitter1"), "users/sitter1")));
+    await assertFails(deleteDoc(doc(as("parent1"), "kyc/sitter1")));
+    await assertSucceeds(deleteDoc(doc(as("sitter1"), "kyc/sitter1/files/selfie")));
+    await assertSucceeds(deleteDoc(doc(as("sitter1"), "kyc/sitter1")));
+  });
+  test("a person wipes their name from reviews and comments they wrote, but nobody else's", async () => {
+    await seed(async (db) => {
+      await setDoc(doc(db, "reviews/b9"), { sitterId: "sitter1", bookingId: "b9", authorId: "parent1", author: "Pat", authorPhoto: null, rating: 5, text: "Lovely stay, thank you!", petType: "Dog", helpfulBy: [], createdAt: new Date() });
+      await setDoc(doc(db, "posts/p1"), { authorId: "parent2", author: "Pam", authorPhoto: null, authorRole: "parent", category: "tip", title: "A tip", text: "Walk early in summer.", likedBy: [], commentCount: 1, createdAt: new Date() });
+      await setDoc(doc(db, "posts/p1/comments/c1"), { authorId: "parent1", author: "Pat", authorPhoto: null, text: "Thanks!", createdAt: new Date() });
+    });
+    const wipe = { author: "Deleted user", authorPhoto: null, authorId: "deleted-user" };
+    await assertFails(updateDoc(doc(as("parent2"), "reviews/b9"), wipe));
+    await assertFails(updateDoc(doc(as("parent1"), "reviews/b9"), { ...wipe, rating: 1 }));
+    await assertFails(updateDoc(doc(as("parent1"), "reviews/b9"), { ...wipe, author: "Someone Else" }));
+    await assertSucceeds(updateDoc(doc(as("parent1"), "reviews/b9"), wipe));
+    // All of someone's comments can be found in one query.
+    const mine = await assertSucceeds(getDocs(query(collectionGroup(as("parent1"), "comments"), where("authorId", "==", "parent1"))));
+    assert.equal(mine.size, 1);
+    await assertFails(updateDoc(doc(as("parent2"), "posts/p1/comments/c1"), wipe));
+    await assertSucceeds(updateDoc(doc(as("parent1"), "posts/p1/comments/c1"), wipe));
+  });
+  test("a person wipes only their own name from a chat thread", async () => {
+    await seed((db) =>
+      setDoc(doc(db, "conversations/parent1_sitter1"), {
+        parentId: "parent1", sitterId: "sitter1", participants: ["parent1", "sitter1"],
+        names: { parent1: "Pat", sitter1: "Sam" }, photos: { parent1: null, sitter1: null },
+        lastMessage: "", lastSenderId: "", lastMessageAt: new Date(),
+      })
+    );
+    await assertFails(updateDoc(doc(as("parent1"), "conversations/parent1_sitter1"), { "names.sitter1": "Deleted user", "photos.sitter1": null }));
+    await assertFails(updateDoc(doc(as("parent2"), "conversations/parent1_sitter1"), { "names.parent2": "Deleted user" }));
+    await assertSucceeds(updateDoc(doc(as("parent1"), "conversations/parent1_sitter1"), { "names.parent1": "Deleted user", "photos.parent1": null }));
   });
 });

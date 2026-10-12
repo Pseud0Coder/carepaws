@@ -5,7 +5,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Camera, ClipboardCheck, ImagePlus, LifeBuoy, Lock, MapPinned, MessageCircle, Phone, Siren, X } from "lucide-react";
 import { addStayLogEntry, getBooking, getStayPhotoUrl, subscribeStayLog } from "@/lib/db";
-import { compressImage } from "@/lib/images";
+import { compressToBase64 } from "@/lib/images";
 import { telHref } from "@/lib/geo";
 import { formatINR, formatRange } from "@/lib/format";
 import type { Booking, StayLogEntry, StayLogKind, UserProfile } from "@/lib/types";
@@ -31,10 +31,10 @@ function StayPhoto({ path }: { path: string }) {
     };
   }, [path]);
   return url ? (
-    <a href={url} target="_blank" rel="noopener noreferrer" className="block overflow-hidden rounded-2xl bg-oat">
+    <div className="block overflow-hidden rounded-2xl bg-oat">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={url} alt="Stay photo" className="aspect-square w-full object-cover" />
-    </a>
+    </div>
   ) : (
     <Skeleton className="aspect-square w-full" />
   );
@@ -157,7 +157,7 @@ function Stay({ profile, id }: { profile: UserProfile; id: string }) {
     return <EmptyState icon={<Lock className="h-7 w-7" />} title="Stay not found" body="Only the pet parent and sitter can see a stay log." />;
 
   const isSitter = profile.uid === booking.sitterId;
-  const open = booking.paymentStatus === "paid" && (booking.status === "confirmed" || booking.status === "completed");
+  const open = booking.status === "confirmed" || booking.status === "completed";
   const allowed: StayLogKind[] = isSitter ? ["update", "dropoff", "pickup", "incident"] : ["dropoff", "pickup", "incident"];
   const myDropoff = entries?.some((e) => e.kind === "dropoff" && e.authorId === profile.uid);
   const other = isSitter ? booking.parentName : booking.sitterName;
@@ -173,7 +173,7 @@ function Stay({ profile, id }: { profile: UserProfile; id: string }) {
     setBusy(true);
     setError("");
     try {
-      const blobs = await Promise.all(files.map((f) => compressImage(f.file, 1400, 0.82)));
+      const blobs = await Promise.all(files.map((f) => compressToBase64(f.file, "stay")));
       await addStayLogEntry(id, { uid: profile.uid, role: isSitter ? "sitter" : "parent" }, kind, text, blobs);
       setText("");
       setFiles([]);
@@ -206,7 +206,7 @@ function Stay({ profile, id }: { profile: UserProfile; id: string }) {
       {!open ? (
         <p className="mt-4 flex gap-3 rounded-2xl bg-honey-tint p-4 text-sm text-bark-soft">
           <Lock className="h-5 w-5 shrink-0 text-honey" />
-          The stay log opens once the booking is accepted and paid. Updates, photos and condition checks are kept here as a shared record.
+          The stay log opens once the sitter has accepted the booking. Updates, photos and condition checks are kept here as a shared record.
         </p>
       ) : (
         <>

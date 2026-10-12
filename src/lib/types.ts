@@ -42,6 +42,8 @@ export interface UserProfile {
   rating?: number;
   reviewCount?: number;
   completedStays?: number;
+  /** Sum of all the stars given, so the average can be updated and checked. */
+  ratingSum?: number;
   vouchCount?: number;
   /** Sitter has a police clearance certificate that an admin has checked. */
   backgroundChecked?: boolean;
@@ -165,6 +167,9 @@ export interface Booking {
   status: BookingStatus;
   paymentStatus: PaymentStatus;
   razorpayOrderId?: string;
+  /** "direct": the parent paid the sitter themselves (UPI or cash) and the sitter recorded it. */
+  paymentMethod?: "direct" | "razorpay";
+  paidAt?: string;
   paymentId?: string;
   notes: string;
   createdAt?: string;

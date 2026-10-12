@@ -3,17 +3,20 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BookOpenText, CalendarHeart, ClipboardCheck, CreditCard, MessageCircle, NotebookPen } from "lucide-react";
+import { BanknoteArrowDown, BookOpenText, CalendarHeart, ClipboardCheck, CreditCard, MessageCircle, NotebookPen } from "lucide-react";
 import {
   acceptBooking,
   addReview,
+  completeStay,
   getContact,
   getReviewedBookingIds,
   getSitter,
+  markPaidDirect,
   openConversation,
   setBookingStatus,
   subscribeBookings,
 } from "@/lib/db";
+import { ONLINE_PAYMENTS } from "@/lib/config";
 import { payForBooking } from "@/lib/payments";
 import type { Booking, BookingStatus, UserProfile } from "@/lib/types";
 import { PET_EMOJI } from "@/lib/constants";
@@ -32,9 +35,9 @@ function statusTag(b: Booking, today: string) {
   if (b.status === "declined") return <Tag tone="ember">Declined</Tag>;
   if (b.status === "cancelled") return <Tag>Cancelled</Tag>;
   if (b.status === "completed") return <Tag tone="moss">Completed</Tag>;
-  if (b.paymentStatus !== "paid") return <Tag tone="clay">Awaiting payment</Tag>;
+  if (ONLINE_PAYMENTS && b.paymentStatus !== "paid") return <Tag tone="clay">Awaiting payment</Tag>;
   if (b.startDate <= today && b.endDate >= today) return <Tag tone="river">In progress</Tag>;
-  return <Tag tone="moss">Confirmed · Paid</Tag>;
+  return <Tag tone="moss">{b.paymentStatus === "paid" ? "Confirmed · Paid" : "Confirmed"}</Tag>;
 }
 
 function bucket(b: Booking, today: string): Tab {
@@ -78,7 +81,7 @@ function BookingCard({
     }
   }
 
-  const status = (s: BookingStatus, msg: string) => act(s, () => setBookingStatus(b.id, s), msg);
+  const status = (s: BookingStatus, msg: string) => act(s, () => (s === "completed" ? completeStay(b) : setBookingStatus(b.id, s)), msg);
 
   async function pay() {
     await act("pay", async () => {
@@ -101,7 +104,7 @@ function BookingCard({
   }
 
   const unpaid = b.paymentStatus !== "paid";
-  const canComplete = isSitter && b.status === "confirmed" && !unpaid && b.endDate <= today;
+  const canComplete = isSitter && b.status === "confirmed" && (!ONLINE_PAYMENTS || !unpaid) && b.endDate <= today;
 
   return (
     <article className="animate-rise rounded-[var(--radius-card)] border border-oat-deep/60 bg-paper p-4 shadow-soft">
@@ -143,6 +146,14 @@ function BookingCard({
         </div>
       )}
 
+      {!ONLINE_PAYMENTS && b.status === "confirmed" && unpaid && (
+        <p className="mt-3 rounded-2xl bg-clay-tint p-3 text-sm text-bark">
+          {isSitter
+            ? `${b.parentName} will pay you ${formatINR(b.totalPrice)} directly (UPI or cash). Tap “Payment received” once it arrives.`
+            : `Pay ${b.sitterName} ${formatINR(b.totalPrice)} directly (UPI or cash) at drop-off or as you agree in chat. They’ll mark it received here.`}
+        </p>
+      )}
+
       <div className="mt-3 flex flex-wrap gap-2">
         {isSitter && b.status === "pending" && (
           <>
@@ -154,12 +165,17 @@ function BookingCard({
             </Button>
           </>
         )}
-        {!isSitter && b.status === "confirmed" && unpaid && (
+        {ONLINE_PAYMENTS && !isSitter && b.status === "confirmed" && unpaid && (
           <Button size="sm" variant="clay" onClick={pay} loading={busy === "pay"}>
             <CreditCard className="h-4 w-4" /> Pay {formatINR(b.totalPrice)}
           </Button>
         )}
-        {((!isSitter && b.status === "pending") || (b.status === "confirmed" && unpaid)) && (
+        {!ONLINE_PAYMENTS && isSitter && b.status === "confirmed" && unpaid && (
+          <Button size="sm" variant="clay" onClick={() => act("paid", () => markPaidDirect(b.id), "Marked as paid.")} loading={busy === "paid"}>
+            <BanknoteArrowDown className="h-4 w-4" /> Payment received
+          </Button>
+        )}
+        {((!isSitter && b.status === "pending") || (b.status === "confirmed" && (!ONLINE_PAYMENTS || unpaid))) && (
           <Button size="sm" variant="ghost" onClick={() => status("cancelled", "Stay cancelled.")} loading={busy === "cancelled"}>
             Cancel
           </Button>
@@ -174,7 +190,7 @@ function BookingCard({
             <NotebookPen className="h-4 w-4" /> Review
           </Button>
         )}
-        {b.paymentStatus === "paid" && (b.status === "confirmed" || b.status === "completed") && (
+        {(b.status === "confirmed" || b.status === "completed") && (
           <Link
             href={`/bookings/stay/?id=${b.id}`}
             className="inline-flex h-9 items-center gap-2 rounded-full bg-moss-tint px-4 text-sm font-semibold text-moss active:opacity-80"
@@ -326,7 +342,7 @@ function Bookings({ profile }: { profile: UserProfile }) {
                     try {
                       await acceptBooking(viewing.id);
                       setViewing(null);
-                      toast("Accepted. We’ve asked them to pay.");
+                      toast(ONLINE_PAYMENTS ? "Accepted. We’ve asked them to pay." : "Accepted. Agree on payment with them in the chat.");
                     } catch {
                       toast("Couldn’t accept. Try again.", "error");
                     } finally {

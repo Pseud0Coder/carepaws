@@ -8,7 +8,6 @@ import {
   type Auth,
 } from "firebase/auth";
 import { connectFirestoreEmulator, getFirestore, type Firestore } from "firebase/firestore";
-import { connectStorageEmulator, getStorage, type FirebaseStorage } from "firebase/storage";
 import { connectFunctionsEmulator, getFunctions, type Functions } from "firebase/functions";
 import { Capacitor } from "@capacitor/core";
 
@@ -30,7 +29,6 @@ const useEmulators = process.env.NEXT_PUBLIC_USE_EMULATORS === "1";
 let app: FirebaseApp | undefined;
 let _auth: Auth | undefined;
 let _db: Firestore | undefined;
-let _storage: FirebaseStorage | undefined;
 let _functions: Functions | undefined;
 
 function getApp(): FirebaseApp {
@@ -60,13 +58,6 @@ export function db(): Firestore {
   _db = getFirestore(getApp());
   if (useEmulators) connectFirestoreEmulator(_db, "127.0.0.1", 8080);
   return _db;
-}
-
-export function storage(): FirebaseStorage {
-  if (_storage) return _storage;
-  _storage = getStorage(getApp());
-  if (useEmulators) connectStorageEmulator(_storage, "127.0.0.1", 9199);
-  return _storage;
 }
 
 export function functions(): Functions {

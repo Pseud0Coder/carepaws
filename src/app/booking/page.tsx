@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { CalendarDays, Check, Info, Plus } from "lucide-react";
 import { addPet, createBooking, getContact, getPets, getSitter, updatePet, type DeclarationInput } from "@/lib/db";
 import type { CareLocation, Pet, SitterProfile, UserProfile } from "@/lib/types";
+import { ONLINE_PAYMENTS } from "@/lib/config";
 import { PET_EMOJI } from "@/lib/constants";
 import { formatDay, formatINR, nightsBetween, todayISO } from "@/lib/format";
 import { cn } from "@/lib/cn";
@@ -208,7 +209,7 @@ function BookingForm({ profile }: { profile: UserProfile }) {
         </div>
         <p className="mt-3 flex gap-2 text-xs text-bark-soft">
           <Info className="h-4 w-4 shrink-0" />
-          You pay only after {sitter.displayName.split(" ")[0]} accepts. Free to cancel until payment.
+          {ONLINE_PAYMENTS ? `You pay only after ${sitter.displayName.split(" ")[0]} accepts. Free to cancel until payment.` : `Nothing is charged here. Once ${sitter.displayName.split(" ")[0]} accepts, you pay them directly (UPI or cash).`}
         </p>
       </section>
 

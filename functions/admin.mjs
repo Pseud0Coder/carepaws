@@ -16,15 +16,18 @@
 //     node admin.mjs kyc-approve <uid> [--background-checked]
 //     node admin.mjs kyc-reject  <uid> --reason "Selfie is too dark to match the ID photo"
 //     node admin.mjs kyc-purge   <uid>             delete a case's images and personal details now
+//     node admin.mjs kyc-purge-old                 delete the personal details of every case decided over 30 days ago
+//                                                  (run it now and then; there is no scheduler on the free plan)
 //
+// Approving or rejecting a case deletes its ID images straight away.
 // Always pass --project <firebase-project-id>. Auth: GOOGLE_APPLICATION_CREDENTIALS=key.json
-// (or the FIRESTORE_EMULATOR_HOST / FIREBASE_STORAGE_EMULATOR_HOST variables for the emulator).
+// (a service account key from Firebase console > Project settings > Service accounts),
+// or the FIRESTORE_EMULATOR_HOST variable for the emulator. This runs on your computer, so it needs no paid plan.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import { initializeApp } from "firebase-admin/app";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
-import { getStorage } from "firebase-admin/storage";
 
 const argv = process.argv.slice(2);
 const flags = {};
@@ -32,25 +35,32 @@ const positional = [];
 for (let i = 0; i < argv.length; i++) {
   if (argv[i].startsWith("--")) {
     const name = argv[i].slice(2);
-    const takesValue = ["project", "reason", "out", "bucket"].includes(name);
+    const takesValue = ["project", "reason", "out"].includes(name);
     flags[name] = takesValue ? argv[++i] : true;
   } else positional.push(argv[i]);
 }
 const [cmd, uid] = positional;
-const COMMANDS = ["pending", "verify", "unverify", "reports", "report-resolve", "kyc-pending", "kyc-show", "kyc-approve", "kyc-reject", "kyc-purge"];
-const needsUid = !["pending", "kyc-pending", "reports"].includes(cmd);
+const COMMANDS = ["pending", "verify", "unverify", "reports", "report-resolve", "kyc-pending", "kyc-show", "kyc-approve", "kyc-reject", "kyc-purge", "kyc-purge-old"];
+const needsUid = !["pending", "kyc-pending", "reports", "kyc-purge-old"].includes(cmd);
 const projectId = flags.project || process.env.GCLOUD_PROJECT;
 if (!projectId || !COMMANDS.includes(cmd) || (needsUid && !uid)) {
   console.error(`Usage: node admin.mjs <${COMMANDS.join("|")}> [uid] --project <firebase-project-id>`);
   process.exit(1);
 }
-const bucketName = flags.bucket || process.env.STORAGE_BUCKET || `${projectId}.firebasestorage.app`;
-initializeApp({ projectId, storageBucket: bucketName });
+initializeApp({ projectId });
 const db = getFirestore();
 const reviewer = process.env.ADMIN_NAME || userInfo().username;
 
+const FILE_NAMES = ["id-front", "id-back", "selfie", "address-proof", "police-cert"];
+
+/** The ID photos live in kyc/{uid}/files/. Delete them all. */
+async function purgeImages(id) {
+  const files = await db.collection(`kyc/${id}/files`).listDocuments();
+  await Promise.all(files.map((f) => f.delete()));
+}
+
 async function purge(id) {
-  await getStorage().bucket().deleteFiles({ prefix: `kyc/${id}/` });
+  await purgeImages(id);
   // Keep the outcome and an audit trail; drop the personal details and file references.
   await db.doc(`kyc/${id}`).update({
     idFront: FieldValue.delete(),
@@ -107,6 +117,15 @@ if (cmd === "pending") {
   }
   await ref.set({ verified: cmd === "verify" }, { merge: true });
   console.log(`${cmd === "verify" ? "Verified" : "Unverified"} ${uid}.`);
+  if (cmd === "unverify") {
+    // Without verification an organisation's vouches mean nothing: withdraw them all and lower each sitter's count.
+    const vouches = await db.collection("vouches").where("orgId", "==", uid).get();
+    for (const v of vouches.docs) {
+      await v.ref.delete();
+      await db.doc(`users/${v.get("sitterId")}`).set({ vouchCount: FieldValue.increment(-1) }, { merge: true });
+    }
+    if (vouches.size) console.log(`Withdrew ${vouches.size} vouch${vouches.size === 1 ? "" : "es"}.`);
+  }
 } else if (cmd === "kyc-pending") {
   const snap = await db.collection("kyc").where("status", "==", "submitted").get();
   if (!snap.size) console.log("No cases waiting.");
@@ -116,6 +135,16 @@ if (cmd === "pending") {
       const k = d.data();
       console.log(`${d.id}  ${k.legalName}  (${k.idType} ····${k.idLast4})  submitted ${k.submittedAt?.toDate().toISOString()}${k.hasPoliceCert ? "  +police cert" : ""}`);
     });
+} else if (cmd === "kyc-purge-old") {
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const decided = await db.collection("kyc").where("reviewedAt", "<", cutoff).get();
+  let n = 0;
+  for (const d of decided.docs) {
+    if (d.get("purgedAt")) continue;
+    await purge(d.id);
+    n++;
+  }
+  console.log(`Deleted the personal details of ${n} old case${n === 1 ? "" : "s"}.`);
 } else {
   const ref = db.doc(`kyc/${uid}`);
   const snap = await ref.get();
@@ -130,22 +159,23 @@ if (cmd === "pending") {
     const { declarations, consent, ...rest } = k;
     console.log(JSON.stringify({ ...rest, consent, declarationsVersion: declarations?.version }, (key, v) => (v?.toDate ? v.toDate().toISOString() : v), 2));
     const profile = (await userRef.get()).data();
-    console.log(`\nProfile name: ${profile?.displayName}   phone verified on account: see Firebase Auth for ${uid}`);
+    console.log(`\nProfile name: ${profile?.displayName}   (account email and sign-in method: Firebase console > Authentication, search for ${uid})`);
     const out = flags.out || join(process.cwd(), "kyc-review", uid);
     mkdirSync(out, { recursive: true });
-    for (const key of ["idFront", "idBack", "selfie", "addressProof", "policeCert"]) {
+    for (const [key, file] of [["idFront", "id-front"], ["idBack", "id-back"], ["selfie", "selfie"], ["addressProof", "address-proof"], ["policeCert", "police-cert"]]) {
       if (!k[key]) continue;
-      const [buf] = await getStorage().bucket().file(k[key]).download().catch((e) => {
-        console.error(`Couldn't read ${k[key]} from bucket "${bucketName}": ${e.message}`);
-        console.error('If the bucket name is wrong, pass --bucket <name> (see Firebase console → Storage; older projects end in ".appspot.com").');
-        process.exit(1);
-      });
-      const dest = join(out, k[key].split("/").pop());
-      writeFileSync(dest, buf);
+      const snap = await db.doc(`kyc/${uid}/files/${file}`).get();
+      if (!snap.exists) {
+        console.error(`  ${file}: no photo saved (already deleted?)`);
+        continue;
+      }
+      const dest = join(out, `${file}.jpg`);
+      writeFileSync(dest, Buffer.from(snap.get("b64"), "base64"));
       console.log(`  saved ${dest}`);
     }
     console.log("\nCheck: the name, date of birth and photo on the ID match; the selfie matches the ID photo;");
     console.log("the ID is genuine and unexpired; the address matches. Delete the saved files when you're done.");
+    console.log("Approving or rejecting deletes the photos from the database straight away.");
   } else if (cmd === "kyc-approve") {
     if (k.status === "approved") {
       console.log("Already approved.");
@@ -162,6 +192,7 @@ if (cmd === "pending") {
       reason: FieldValue.delete(),
       backgroundChecked: !!flags["background-checked"],
     });
+    await purgeImages(uid); // the decision is made: the photos are no longer needed
     await userRef.set({ verified: true, backgroundChecked: !!flags["background-checked"] }, { merge: true });
     console.log(`Approved ${uid}${flags["background-checked"] ? " (background checked)" : ""}. They are now listed and bookable.`);
   } else if (cmd === "kyc-reject") {
@@ -170,6 +201,7 @@ if (cmd === "pending") {
       process.exit(1);
     }
     await ref.update({ status: "rejected", reviewedAt: FieldValue.serverTimestamp(), reviewedBy: reviewer, reason: flags.reason });
+    await purgeImages(uid); // they upload fresh photos when they resubmit
     await userRef.set({ verified: false, backgroundChecked: false }, { merge: true });
     console.log(`Rejected ${uid}. They can resubmit from the app.`);
   } else if (cmd === "kyc-purge") {

@@ -3,9 +3,10 @@
 import { useState } from "react";
 import Link from "next/link";
 import { CheckCircle2, Lock, ShieldCheck, Smartphone } from "lucide-react";
+import { PHONE_OTP } from "@/lib/config";
 import { useAuth } from "@/lib/auth-context";
 import { submitKyc, type KycInput } from "@/lib/db";
-import { compressImage } from "@/lib/images";
+import { compressToBase64 } from "@/lib/images";
 import { KYC_ID_TYPES, SITTER_DECLARATIONS, SITTER_DECLARATIONS_VERSION } from "@/lib/constants";
 import { HYD_CITY, HYD_PINCODE } from "@/lib/hyderabad";
 import type { KycIdType } from "@/lib/types";
@@ -14,7 +15,9 @@ import PhoneOtp from "./PhoneOtp";
 import PhotoField from "./PhotoField";
 import { Button, Chip, ErrorNote, Field, Input } from "./ui";
 
-const STEPS = ["Mobile", "Identity", "Background", "Standards"];
+// The mobile step only exists when SMS verification is switched on (it needs the paid Blaze plan).
+const STEPS = PHONE_OTP ? ["Mobile", "Identity", "Background", "Standards"] : ["Identity", "Background", "Standards"];
+const FIRST = PHONE_OTP ? 0 : 1;
 
 function eighteenYearsAgo() {
   const d = new Date();
@@ -37,7 +40,7 @@ export default function KycForm({
   onSubmitted: () => void | Promise<void>;
 }) {
   const { phoneNumber, refreshUser } = useAuth();
-  const [step, setStep] = useState(phoneNumber ? 1 : 0);
+  const [step, setStep] = useState(PHONE_OTP && !phoneNumber ? 0 : 1);
   const [legalName, setLegalName] = useState(/^Member\b/.test(initialName ?? "") ? "" : (initialName ?? ""));
   const [dob, setDob] = useState("");
   const [idType, setIdType] = useState<KycIdType>("aadhaar");
@@ -96,11 +99,11 @@ export default function KycForm({
         emergencyPhone: emergencyPhone.trim(),
       };
       const files = {
-        idFront: await compressImage(idFront!),
-        selfie: await compressImage(selfie!),
-        ...(idMeta.back && idBack ? { idBack: await compressImage(idBack) } : {}),
-        ...(!idMeta.address && addressProof ? { addressProof: await compressImage(addressProof) } : {}),
-        ...(policeCert ? { policeCert: await compressImage(policeCert) } : {}),
+        idFront: await compressToBase64(idFront!, "document"),
+        selfie: await compressToBase64(selfie!, "document"),
+        ...(idMeta.back && idBack ? { idBack: await compressToBase64(idBack, "document") } : {}),
+        ...(!idMeta.address && addressProof ? { addressProof: await compressToBase64(addressProof, "document") } : {}),
+        ...(policeCert ? { policeCert: await compressToBase64(policeCert, "document") } : {}),
       };
       const decl = Object.fromEntries(SITTER_DECLARATIONS.map((d) => [d.key, true as const]));
       await submitKyc(uid, input, files, decl, SITTER_DECLARATIONS_VERSION, setProgress);
@@ -108,8 +111,8 @@ export default function KycForm({
     } catch (e) {
       console.error(e);
       setError(
-        (e as { code?: string }).code === "storage/unauthorized"
-          ? "We couldn’t upload your documents. If you submitted before, your case may already be under review."
+        (e as { code?: string }).code === "permission-denied"
+          ? "We couldn’t save your documents. If you submitted before, your case may already be under review."
           : (e as Error).message || "Something went wrong. Please try again."
       );
     } finally {
@@ -131,13 +134,13 @@ export default function KycForm({
       <ol className="mb-6 flex gap-1.5" aria-label="Verification steps">
         {STEPS.map((label, i) => (
           <li key={label} className="flex-1">
-            <span className={cn("block h-1.5 rounded-full", i <= step ? "bg-moss" : "bg-oat-deep")} />
-            <span className={cn("mt-1.5 block text-[11px] font-semibold", i === step ? "text-bark" : "text-stone")}>{label}</span>
+            <span className={cn("block h-1.5 rounded-full", i <= step - FIRST ? "bg-moss" : "bg-oat-deep")} />
+            <span className={cn("mt-1.5 block text-[11px] font-semibold", i === step - FIRST ? "text-bark" : "text-stone")}>{label}</span>
           </li>
         ))}
       </ol>
 
-      {step === 0 && (
+      {PHONE_OTP && step === 0 && (
         <section className="space-y-4">
           <div className="flex gap-3 rounded-2xl bg-oat/60 p-4 text-sm text-bark-soft">
             <Smartphone className="h-5 w-5 shrink-0 text-moss" />
@@ -170,7 +173,7 @@ export default function KycForm({
           <div className="flex gap-3 rounded-2xl bg-oat/60 p-4 text-sm text-bark-soft">
             <Lock className="mt-0.5 h-5 w-5 shrink-0 text-moss" />
             <p>
-              We use your ID only to confirm who you are. Documents are stored privately and seen only by CarePaws reviewers. We delete the images 30 days after a decision.{" "}
+              We use your ID only to confirm who you are. Documents are stored privately and seen only by CarePaws reviewers. We delete the images as soon as we have decided.{" "}
               <Link href="/legal/#privacy" className="font-semibold text-moss">
                 How we protect your data
               </Link>
@@ -197,8 +200,8 @@ export default function KycForm({
           <Field label="Last 4 characters of the ID number" hint="Never enter the full number.">
             <Input value={idLast4} onChange={(e) => setIdLast4(e.target.value.replace(/[^A-Za-z0-9]/g, "").slice(0, 4))} maxLength={4} autoComplete="off" className="uppercase tracking-widest" />
           </Field>
-          <PhotoField label="ID: front" file={idFront} onChange={setIdFront} accept="image/*,application/pdf" hint="A photo or a downloaded PDF. Make sure all text is readable." />
-          {idMeta.back && <PhotoField label="ID: back" file={idBack} onChange={setIdBack} accept="image/*,application/pdf" />}
+          <PhotoField label="ID: front" file={idFront} onChange={setIdFront} accept="image/*" hint="A clear photo or screenshot. Make sure all text is readable." />
+          {idMeta.back && <PhotoField label="ID: back" file={idBack} onChange={setIdBack} accept="image/*" />}
           <PhotoField label="Selfie" file={selfie} onChange={setSelfie} capture="user" hint="Face the camera in good light. We match it to your ID." />
 
           <Field label="Home address">
@@ -213,7 +216,7 @@ export default function KycForm({
             </Field>
           </div>
           {!idMeta.address && (
-            <PhotoField label="Address proof" file={addressProof} onChange={setAddressProof} accept="image/*,application/pdf" hint="Utility bill, bank statement or rent agreement from the last 3 months." />
+            <PhotoField label="Address proof" file={addressProof} onChange={setAddressProof} accept="image/*" hint="Utility bill, bank statement or rent agreement from the last 3 months." />
           )}
 
           <div className="grid grid-cols-2 gap-3">
@@ -239,7 +242,7 @@ export default function KycForm({
               A police clearance certificate (PCC) earns you a <span className="font-semibold text-bark">Background checked</span> badge once we’ve verified it. It’s optional, but pet parents notice it, and many choose only checked sitters.
             </p>
           </div>
-          <PhotoField label="Police clearance certificate" file={policeCert} onChange={setPoliceCert} accept="image/*,application/pdf" optional hint="PDF or photo, issued within the last 6 months." />
+          <PhotoField label="Police clearance certificate" file={policeCert} onChange={setPoliceCert} accept="image/*" optional hint="A photo or screenshot of the certificate, issued within the last 6 months." />
           <div className="flex gap-3 pt-2">
             <Button variant="secondary" onClick={() => setStep(1)} className="flex-1">
               Back

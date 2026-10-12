@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Mail, PawPrint, Smartphone } from "lucide-react";
 import { authErrorMessage, useAuth } from "@/lib/auth-context";
 import PhoneOtp from "@/components/PhoneOtp";
+import { PHONE_OTP } from "@/lib/config";
 import { AppBar, Button, ErrorNote, Field, Input, useToast } from "@/components/ui";
 
 type Mode = "signin" | "signup" | "reset";
@@ -99,14 +100,16 @@ function AuthScreen() {
 
         {method === "choose" && (
           <div className="space-y-3">
-            <Button size="lg" block onClick={() => setMethod("phone")}>
-              <Smartphone className="h-5 w-5" /> Continue with phone
-            </Button>
-            <Button variant="secondary" size="lg" block onClick={google} loading={busy === "google"} disabled={!!busy}>
+            {PHONE_OTP && (
+              <Button size="lg" block onClick={() => setMethod("phone")}>
+                <Smartphone className="h-5 w-5" /> Continue with phone
+              </Button>
+            )}
+            <Button variant={PHONE_OTP ? "secondary" : "primary"} size="lg" block onClick={google} loading={busy === "google"} disabled={!!busy}>
               {busy !== "google" && <GoogleMark />}
               Continue with Google
             </Button>
-            <Button variant="secondary" size="lg" block onClick={() => setMethod("email")} disabled={!!busy}>
+            <Button variant="secondary" size="lg" block onClick={() => { setMethod("email"); setMode((m) => (m === "reset" ? "signin" : m)); }} disabled={!!busy}>
               <Mail className="h-5 w-5" /> Continue with email
             </Button>
             <ErrorNote>{error}</ErrorNote>
@@ -118,7 +121,7 @@ function AuthScreen() {
           </div>
         )}
 
-        {method === "phone" && <PhoneOtp mode="signin" onDone={() => undefined} submitLabel="Verify and continue" />}
+        {PHONE_OTP && method === "phone" && <PhoneOtp mode="signin" onDone={() => undefined} submitLabel="Verify and continue" />}
 
         {method === "email" && (
           <>

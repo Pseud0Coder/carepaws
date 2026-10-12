@@ -9,6 +9,8 @@ import {
   addDoc,
   updateDoc,
   deleteDoc,
+  deleteField,
+  collectionGroup,
   query,
   where,
   orderBy,
@@ -19,14 +21,15 @@ import {
   arrayUnion,
   arrayRemove,
   increment,
+  runTransaction,
   writeBatch,
   type DocumentData,
   type DocumentSnapshot,
   type QueryDocumentSnapshot,
 } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { httpsCallable } from "firebase/functions";
-import { db, storage, functions } from "./firebase";
+import { auth, db, functions } from "./firebase";
+import { deleteUser } from "firebase/auth";
 import { DECLARATIONS_VERSION, HOME_DECLARATIONS, PARENT_DECLARATIONS } from "./constants";
 import { nightsBetween } from "./format";
 import type {
@@ -133,6 +136,14 @@ export type EditableProfile = Pick<
 
 export async function updateProfile(uid: string, data: Partial<EditableProfile>) {
   await updateDoc(doc(db(), "users", uid), { ...data, updatedAt: serverTimestamp() });
+  // A rescue or clinic's name and photo are copied onto each vouch it has given. Keep them in step.
+  if ("displayName" in data || "photoURL" in data) {
+    const vouches = await getDocs(query(collection(db(), "vouches"), where("orgId", "==", uid)));
+    if (!vouches.empty) {
+      const p = await getProfile(uid);
+      if (p) await Promise.all(vouches.docs.map((v) => updateDoc(v.ref, { orgName: p.displayName, orgPhoto: p.photoURL ?? null })));
+    }
+  }
 }
 
 export async function getContact(uid: string): Promise<PrivateContact | null> {
@@ -211,18 +222,27 @@ export interface KycInput {
   emergencyPhone: string;
 }
 
+/** The document photos, as base64 JPEG text (see lib/images.ts). */
 export interface KycFiles {
-  idFront: Blob;
-  idBack?: Blob;
-  selfie: Blob;
-  addressProof?: Blob;
-  policeCert?: Blob;
+  idFront: string;
+  idBack?: string;
+  selfie: string;
+  addressProof?: string;
+  policeCert?: string;
 }
 
+const KYC_FILE_NAMES: Record<keyof KycFiles, string> = {
+  idFront: "id-front",
+  idBack: "id-back",
+  selfie: "selfie",
+  addressProof: "address-proof",
+  policeCert: "police-cert",
+};
+
 /**
- * Uploads the documents to private Storage (write-only for the owner), then records the case.
- * `onProgress` is called with a 0..1 fraction. The case is created last, so a failed
- * upload leaves nothing half-submitted.
+ * Saves the documents privately (the owner can write them but never read them back; only an admin can), then records
+ * the case. `onProgress` is called with a 0..1 fraction. The case is created last, so a failed save leaves
+ * nothing half-submitted.
  */
 export async function submitKyc(
   uid: string,
@@ -232,21 +252,13 @@ export async function submitKyc(
   declarationsVersion: number,
   onProgress?: (fraction: number) => void
 ) {
-  const entries = Object.entries(files).filter(([, blob]) => !!blob) as [keyof KycFiles, Blob][];
-  const fileName: Record<keyof KycFiles, string> = {
-    idFront: "id-front",
-    idBack: "id-back",
-    selfie: "selfie",
-    addressProof: "address-proof",
-    policeCert: "police-cert",
-  };
+  const entries = Object.entries(files).filter(([, b64]) => !!b64) as [keyof KycFiles, string][];
   const paths: Partial<Record<keyof KycFiles, string>> = {};
   let done = 0;
-  for (const [key, blob] of entries) {
-    const ext = blob.type === "application/pdf" ? "pdf" : "jpg";
-    const path = `kyc/${uid}/${fileName[key]}.${ext}`;
-    await uploadBytes(ref(storage(), path), blob, { contentType: blob.type === "application/pdf" ? "application/pdf" : "image/jpeg" });
-    paths[key] = path;
+  for (const [key, b64] of entries) {
+    const name = KYC_FILE_NAMES[key];
+    await setDoc(doc(db(), "kyc", uid, "files", name), { b64, createdAt: serverTimestamp() });
+    paths[key] = `kyc/${uid}/${name}`;
     onProgress?.(++done / entries.length);
   }
   await setDoc(doc(db(), "kyc", uid), {
@@ -291,21 +303,36 @@ export async function getVouchesByOrg(orgId: string): Promise<Vouch[]> {
   return snap.docs.map((d) => fromDoc<Vouch>(d)).sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
 }
 
+/** Adds the vouch and raises the sitter's count together. */
 export async function vouchForSitter(org: UserProfile, sitterId: string, note: string) {
   const n = note.trim();
-  await setDoc(doc(db(), "vouches", vouchId(org.uid, sitterId)), {
-    orgId: org.uid,
-    orgName: org.displayName,
-    orgPhoto: org.photoURL ?? null,
-    orgType: org.role,
-    sitterId,
-    ...(n ? { note: n } : {}),
-    createdAt: serverTimestamp(),
+  const id = vouchId(org.uid, sitterId);
+  const sitterRef = doc(db(), "users", sitterId);
+  await runTransaction(db(), async (tx) => {
+    const sitter = await tx.get(sitterRef);
+    tx.set(doc(db(), "vouches", id), {
+      orgId: org.uid,
+      orgName: org.displayName,
+      orgPhoto: org.photoURL ?? null,
+      orgType: org.role,
+      sitterId,
+      ...(n ? { note: n } : {}),
+      createdAt: serverTimestamp(),
+    });
+    tx.update(sitterRef, { vouchCount: (sitter.data()?.vouchCount ?? 0) + 1, lastVouch: id });
   });
 }
 
+/** Removes the vouch and lowers the sitter's count together. */
 export async function withdrawVouch(orgId: string, sitterId: string) {
-  await deleteDoc(doc(db(), "vouches", vouchId(orgId, sitterId)));
+  const id = vouchId(orgId, sitterId);
+  const sitterRef = doc(db(), "users", sitterId);
+  await runTransaction(db(), async (tx) => {
+    const sitter = await tx.get(sitterRef);
+    tx.delete(doc(db(), "vouches", id));
+    // A sitter who has already left has no count to lower.
+    if (sitter.exists()) tx.update(sitterRef, { vouchCount: Math.max(0, (sitter.data().vouchCount ?? 1) - 1), lastVouch: id });
+  });
 }
 
 // ─── Pets ──────────────────────────────────────────────────────────────────
@@ -428,6 +455,22 @@ export async function setBookingStatus(id: string, status: BookingStatus) {
   await updateDoc(doc(db(), "bookings", id), { status, updatedAt: serverTimestamp() });
 }
 
+/** Marks the stay completed and adds it to the sitter's public count, together. */
+export async function completeStay(booking: Booking) {
+  const sitterRef = doc(db(), "users", booking.sitterId);
+  await runTransaction(db(), async (tx) => {
+    const sitter = await tx.get(sitterRef);
+    tx.update(doc(db(), "bookings", booking.id), { status: "completed", updatedAt: serverTimestamp() });
+    tx.update(sitterRef, { completedStays: (sitter.data()?.completedStays ?? 0) + 1, lastCompleted: booking.id });
+  });
+}
+
+/** The sitter records that the pet parent paid them directly (UPI or cash). */
+export async function markPaidDirect(id: string) {
+  await updateDoc(doc(db(), "bookings", id), { paymentStatus: "paid", paymentMethod: "direct", paidAt: serverTimestamp(), updatedAt: serverTimestamp() });
+}
+
+// Paying inside the app needs the Razorpay Cloud Functions (paid Firebase plan). Off unless NEXT_PUBLIC_ONLINE_PAYMENTS=1.
 export async function createPaymentOrder(bookingId: string) {
   const call = httpsCallable<
     { bookingId: string },
@@ -460,18 +503,27 @@ export async function getReviewedBookingIds(authorId: string): Promise<Set<strin
   return new Set(snap.docs.map((d) => d.id));
 }
 
+/** Posts the review and folds its stars into the sitter's rating, in one step the rules check. */
 export async function addReview(booking: Booking, author: UserProfile, rating: number, text: string) {
-  await setDoc(doc(db(), "reviews", booking.id), {
-    sitterId: booking.sitterId,
-    bookingId: booking.id,
-    authorId: author.uid,
-    author: author.displayName,
-    authorPhoto: author.photoURL ?? null,
-    rating,
-    text,
-    petType: booking.petType,
-    helpfulBy: [],
-    createdAt: serverTimestamp(),
+  const sitterRef = doc(db(), "users", booking.sitterId);
+  await runTransaction(db(), async (tx) => {
+    const sitter = (await tx.get(sitterRef)).data() ?? {};
+    const reviewCount = (sitter.reviewCount ?? 0) + 1;
+    const ratingSum = (sitter.ratingSum ?? 0) + rating;
+    const average = Math.round((ratingSum / reviewCount) * 10) / 10;
+    tx.set(doc(db(), "reviews", booking.id), {
+      sitterId: booking.sitterId,
+      bookingId: booking.id,
+      authorId: author.uid,
+      author: author.displayName,
+      authorPhoto: author.photoURL ?? null,
+      rating,
+      text,
+      petType: booking.petType,
+      helpfulBy: [],
+      createdAt: serverTimestamp(),
+    });
+    tx.update(sitterRef, { reviewCount, ratingSum, rating: average, topRated: reviewCount >= 10 && average >= 4.8, lastReview: booking.id });
   });
 }
 
@@ -605,11 +657,9 @@ export async function addComment(postId: string, author: UserProfile, text: stri
 
 // ─── Uploads ───────────────────────────────────────────────────────────────
 
-export async function uploadAvatar(uid: string, file: Blob): Promise<string> {
-  const ext = file.type === "image/png" ? "png" : "jpg";
-  const r = ref(storage(), `users/${uid}/avatar.${ext}`);
-  const snap = await uploadBytes(r, file, { contentType: file.type });
-  return getDownloadURL(snap.ref);
+/** A profile photo is kept in the profile itself, as a small JPEG. Returns the value for `photoURL`. */
+export function avatarValue(b64: string): string {
+  return `data:image/jpeg;base64,${b64}`;
 }
 
 // ─── Stay log ──────────────────────────────────────────────────────────────
@@ -624,19 +674,19 @@ const randomName = () => {
   return Array.from(bytes, (b) => b.toString(36).padStart(2, "0")).join("").slice(0, 24);
 };
 
-/** Uploads the photos, then adds the entry. Photos go in first so an entry never points at a missing file. */
+/** Saves the photos, then adds the entry. Photos go in first so an entry never points at a missing photo. */
 export async function addStayLogEntry(
   bookingId: string,
   author: { uid: string; role: "parent" | "sitter" },
   kind: StayLogKind,
   text: string,
-  photos: Blob[]
+  photos: string[]
 ) {
   const paths: string[] = [];
-  for (const blob of photos) {
-    const path = `stays/${bookingId}/${randomName()}.jpg`;
-    await uploadBytes(ref(storage(), path), blob, { contentType: "image/jpeg" });
-    paths.push(path);
+  for (const b64 of photos) {
+    const id = randomName();
+    await setDoc(doc(db(), "bookings", bookingId, "photos", id), { authorId: author.uid, b64, createdAt: serverTimestamp() });
+    paths.push(`stays/${bookingId}/${id}`);
   }
   await addDoc(collection(db(), "bookings", bookingId, "log"), {
     authorId: author.uid,
@@ -648,7 +698,14 @@ export async function addStayLogEntry(
   });
 }
 
-export const getStayPhotoUrl = (path: string) => getDownloadURL(ref(storage(), path));
+/** A stay photo as something an <img> can show. `path` is "stays/{bookingId}/{photoId}". */
+export async function getStayPhotoUrl(path: string): Promise<string> {
+  const [, bookingId, photoId] = path.split("/");
+  const snap = await getDoc(doc(db(), "bookings", bookingId, "photos", photoId));
+  const b64 = snap.data()?.b64;
+  if (typeof b64 !== "string") throw new Error("Photo not found");
+  return `data:image/jpeg;base64,${b64}`;
+}
 
 // ─── Reports and blocking ──────────────────────────────────────────────────
 
@@ -681,7 +738,81 @@ export async function unblockUser(uid: string, otherId: string) {
 
 // ─── Account deletion ──────────────────────────────────────────────────────
 
+const GONE = "Deleted user";
+
+/**
+ * Deletes the signed-in person's account from the app (Google Play and the right to erasure require this in-app).
+ *
+ * Deleted: the profile, contact details, pets, ID documents, block list, posts, and vouches given.
+ * Wiped of name and photo, because other people's records depend on them: bookings (kept for disputes),
+ * reviews and comments written, and chat threads.
+ * Refused while a stay is confirmed, and when the sign-in is not recent. Safe to retry if it stops part-way.
+ */
 export async function deleteMyAccount() {
-  const call = httpsCallable<Record<string, never>, { deleted: boolean }>(functions(), "deleteAccount");
-  return (await call({})).data;
+  const user = auth().currentUser;
+  if (!user) throw new Error("Sign in first.");
+  const uid = user.uid;
+  // A stolen session shouldn't be able to erase an account: require a sign-in in the last 15 minutes.
+  const signedInAt = Date.parse(user.metadata.lastSignInTime ?? "");
+  if (!signedInAt || Date.now() - signedInAt > 15 * 60 * 1000) throw new Error("recent-login-required");
+
+  const bookings = [
+    ...(await getDocs(query(collection(db(), "bookings"), where("parentId", "==", uid)))).docs,
+    ...(await getDocs(query(collection(db(), "bookings"), where("sitterId", "==", uid)))).docs,
+  ];
+  if (bookings.some((d) => d.get("status") === "confirmed")) throw new Error("active-stays");
+
+  // Bookings: close open requests, then wipe this person's details from every one.
+  for (const d of bookings) {
+    const isParent = d.get("parentId") === uid;
+    if (d.get("status") === "pending") {
+      await updateDoc(d.ref, { status: isParent ? "cancelled" : "declined", updatedAt: serverTimestamp() });
+    }
+    if (isParent) {
+      await updateDoc(d.ref, {
+        parentName: GONE,
+        parentPhoto: null,
+        notes: "",
+        petNotes: "",
+        "declarations.emergencyContactName": "",
+        "declarations.emergencyContactPhone": "",
+        "declarations.preferredVetName": deleteField(),
+        "declarations.preferredVetPhone": deleteField(),
+      });
+    } else {
+      await updateDoc(d.ref, { sitterName: GONE, sitterPhoto: null });
+    }
+  }
+
+  const [pets, given, written, posts, liked, helpful, comments, convos] = await Promise.all([
+    getDocs(query(collection(db(), "pets"), where("ownerId", "==", uid))),
+    getDocs(query(collection(db(), "vouches"), where("orgId", "==", uid))),
+    getDocs(query(collection(db(), "reviews"), where("authorId", "==", uid))),
+    getDocs(query(collection(db(), "posts"), where("authorId", "==", uid))),
+    getDocs(query(collection(db(), "posts"), where("likedBy", "array-contains", uid))),
+    getDocs(query(collection(db(), "reviews"), where("helpfulBy", "array-contains", uid))),
+    getDocs(query(collectionGroup(db(), "comments"), where("authorId", "==", uid))),
+    getDocs(query(collection(db(), "conversations"), where("participants", "array-contains", uid))),
+  ]);
+  const wipe = { author: GONE, authorPhoto: null, authorId: "deleted-user" };
+  await Promise.all([
+    ...pets.docs.map((d) => deleteDoc(d.ref)),
+    ...posts.docs.map((d) => deleteDoc(d.ref)),
+    ...given.docs.map((d) => withdrawVouch(uid, d.get("sitterId"))),
+    ...written.docs.map((d) => updateDoc(d.ref, wipe)),
+    ...comments.docs.map((d) => updateDoc(d.ref, wipe)),
+    ...liked.docs.filter((d) => d.get("authorId") !== uid).map((d) => updateDoc(d.ref, { likedBy: arrayRemove(uid) })),
+    ...helpful.docs.map((d) => updateDoc(d.ref, { helpfulBy: arrayRemove(uid) })),
+    ...convos.docs.map((d) => updateDoc(d.ref, { [`names.${uid}`]: GONE, [`photos.${uid}`]: null })),
+    deleteDoc(doc(db(), "users", uid, "private", "contact")),
+  ]);
+  const blocked = await getDocs(collection(db(), "users", uid, "blocked"));
+  await Promise.all(blocked.docs.map((d) => deleteDoc(d.ref)));
+
+  // The profile, then the ID case (which the rules only let go once the profile is gone), then the sign-in itself.
+  await deleteDoc(doc(db(), "users", uid));
+  await Promise.all(["id-front", "id-back", "selfie", "address-proof", "police-cert"].map((n) => deleteDoc(doc(db(), "kyc", uid, "files", n))));
+  await deleteDoc(doc(db(), "kyc", uid));
+  await deleteUser(user);
+  return { deleted: true };
 }

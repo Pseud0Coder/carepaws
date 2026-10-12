@@ -4,7 +4,7 @@ CarePaws is launching in **Hyderabad**, and every account is real. These are the
 
 ## Before onboarding: sign-in
 
-Phone number (OTP), Google, or email and password. "Just looking around" can browse without an account.
+Google, or email and password. "Just looking around" can browse without an account. (Phone OTP is built but switched off on the free Firebase plan.)
 
 ## Screen 1: How will you use CarePaws? (everyone)
 
@@ -19,15 +19,16 @@ Note shown: *CarePaws is launching in Hyderabad first. Elsewhere? You can still 
 
 ## Pet parent (3 steps)
 
-**Step 1. Verify your mobile number** (skipped if they signed in with their phone)
-- Mobile number (Indian, 10 digits, starts 6–9), then the 6-digit SMS code.
-- One number per account. Never shown on the profile.
+**Step 1. Confirm your email** (skipped for Google accounts, which arrive confirmed)
+- We email a link; they open it, come back and tap "I've confirmed it". Until then nothing else is asked, and the security rules would refuse the profile anyway.
+- "Send the email again" is there if it didn't arrive.
 
 **Step 2. A little about you**
 1. Name (required)
-2. Your neighbourhood in Hyderabad (required, chosen from a list of 67 areas; never an address)
-3. About your household (optional, up to 600 characters)
-4. "I'm 18 or older, and I agree to the Terms, Pet care policy and Privacy notice" (required)
+2. Mobile number (required: Indian, 10 digits, starts 6–9; a private contact detail, never shown on the profile)
+3. Your neighbourhood in Hyderabad (required, chosen from a list of 67 areas; never an address)
+4. About your household (optional, up to 600 characters)
+5. "I'm 18 or older, and I agree to the Terms, Pet care policy and Privacy notice" (required)
 
 **Step 3. Who are we caring for?** (can be skipped, but booking needs a pet)
 - Kind of pet: Dog, Cat, Bird, Rabbit, Small pet, Reptile
@@ -44,14 +45,15 @@ Note shown: *CarePaws is launching in Hyderabad first. Elsewhere? You can still 
 
 ## Pet sitter (4 steps, then admin review)
 
-**Step 1. Verify your mobile number** (same as above)
+**Step 1. Confirm your email** (same as above)
 
 **Step 2. A little about you**
-1. Your photo (required: a clear photo of your face)
+1. Your photo (required: a clear photo of your face; shrunk on the phone and kept in the profile)
 2. Name (required)
-3. Your neighbourhood in Hyderabad (required)
-4. About you and your home (required, at least 30 characters)
-5. "I'm 18 or older, and I agree to the Terms, Pet care policy and Privacy notice" (required)
+3. Mobile number (required, private, as above)
+4. Your neighbourhood in Hyderabad (required)
+5. About you and your home (required, at least 30 characters)
+6. "I'm 18 or older, and I agree to the Terms, Pet care policy and Privacy notice" (required)
 
 **Step 3. Your sitter profile**
 - Services you offer (at least one): Overnight stays, House sitting, Drop-in visits, Dog walking, Medication, Special needs care, Pet taxi, Grooming, Training reinforcement
@@ -66,11 +68,11 @@ Note shown: *CarePaws is launching in Hyderabad first. Elsewhere? You can still 
 2. Date of birth (must be 18 or older)
 3. ID type: Aadhaar (masked), Passport, Driving licence, Voter ID (EPIC), PAN card
 4. Last 4 characters of the ID number. The full number is never collected
-5. Photos: ID front, ID back (where the ID has one), and a selfie
+5. Photos (not PDFs): ID front, ID back (where the ID has one), and a selfie
 6. Home address, with the city fixed to Hyderabad and a Hyderabad pincode (500, 501 or 502)
-7. An address proof, only if the ID is a PAN card
+7. An address proof (a photo), only if the ID is a PAN card
 8. Emergency contact: name and phone
-9. Police clearance certificate (optional; earns a "Background checked" badge)
+9. Police clearance certificate, as a photo (optional; earns a "Background checked" badge)
 10. Care standards. Every one must be ticked:
     - Everything I've told CarePaws about myself, my home and my ID is true, and the documents are mine.
     - My home is safe for animals: windows and balconies are secured, fences and gates are escape-proof, and toxic plants, chemicals and medicines are out of reach.
@@ -98,7 +100,8 @@ The listing appears only after an admin verifies it.
 
 ## What is enforced, not just asked
 
-- A parent or sitter can't finish onboarding without a verified mobile number or a Hyderabad neighbourhood.
+- A parent or sitter can't finish onboarding without a confirmed email (or a verified phone number, when that is switched on) or a Hyderabad neighbourhood.
 - A sitter can't go live without a submitted identity case, a rate and at least one pet type.
 - Sitter pincodes must be Hyderabad ones, and a listing's pin must lie inside Hyderabad.
+- ID photos are write-only for the sitter and are deleted the moment CarePaws approves or rejects the case.
 - Closing the app part-way resumes at the right step, and nothing already saved is asked again.

@@ -44,7 +44,7 @@ export default function LegalPage() {
             <li><strong>Daily updates.</strong> Sitters send at least one photo update a day. The stay log is a shared record for both sides.</li>
             <li><strong>Emergencies.</strong> If a pet is unwell or injured, the sitter contacts the pet parent and a vet straight away. The pet parent authorises emergency veterinary treatment up to the limit they set when booking, and reimburses reasonable emergency costs.</li>
             <li><strong>Risk.</strong> Even with excellent care, pets can become ill or injured, especially when stressed by a new place. Concerns should be raised within 24 hours, with the stay log and photos as evidence.</li>
-            <li><strong>Payments.</strong> Payment is taken through Razorpay after a sitter accepts a booking.</li>
+            <li><strong>Payments.</strong> For now, the pet parent pays the sitter directly (UPI or cash) once the sitter accepts a booking, and the sitter marks it as received in the app. CarePaws does not hold or handle the money, and cannot refund or recover it. Agree the details in the chat first.</li>
           </ul>
         </Section>
 
@@ -61,7 +61,7 @@ export default function LegalPage() {
           <ul>
             <li>Your phone number and email are never shown to other users. Identity documents are stored privately: nobody, including you, can open them in the app, and only authorised CarePaws reviewers can.</li>
             <li>When a booking is confirmed, the sitter sees your pet’s care sheet and your declarations for that booking.</li>
-            <li>We share data with the services that run CarePaws (Google Firebase for hosting, sign-in and storage; Razorpay for payments). We do not sell personal data.</li>
+            <li>We share data with the services that run CarePaws (Google Firebase for hosting, sign-in and storage of your data). We do not sell personal data.</li>
           </ul>
           <p><strong>How long we keep it</strong></p>
           <ul>
@@ -73,7 +73,7 @@ export default function LegalPage() {
 
         <Section id="deletion" title="Delete your account and data">
           <p>
-            In the app, open <strong>You → Delete my account</strong>. This signs you out everywhere and deletes your profile, pets, identity documents, private contact details and unsent data. To protect other people and meet legal duties, bookings, payments and reviews are kept but detached from your name and photo.
+            In the app, open <strong>You → Delete my account</strong>. This signs you out everywhere and deletes your profile, pets, identity documents, private contact details and posts. To protect other people and meet legal duties, bookings, reviews, comments and chat messages are kept but detached from your name and photo.
           </p>
           <p>
             Can’t sign in? {SUPPORT ? <>Email <a className="font-semibold text-moss" href={`mailto:${SUPPORT}?subject=Delete%20my%20CarePaws%20account`}>{SUPPORT}</a> from your account’s email address or phone number and we’ll delete it.</> : <>Contact CarePaws support from the address on our store listing and we’ll delete it.</>}
