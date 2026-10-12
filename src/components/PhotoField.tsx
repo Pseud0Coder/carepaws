@@ -13,6 +13,7 @@ export default function PhotoField({
   capture,
   accept = "image/*",
   optional,
+  prompt,
 }: {
   label: string;
   hint?: string;
@@ -22,6 +23,8 @@ export default function PhotoField({
   capture?: "user" | "environment";
   accept?: string;
   optional?: boolean;
+  /** The line shown before a file is chosen. */
+  prompt?: string;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<string | null>(null);
@@ -67,7 +70,7 @@ export default function PhotoField({
           )}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[15px] font-medium text-bark">{file ? file.name : capture ? "Take a photo" : "Choose a file"}</span>
+          <span className="block truncate text-[15px] font-medium text-bark">{file ? file.name : (prompt ?? (capture ? "Take a photo" : "Choose a file"))}</span>
           <span className="block text-xs text-stone">{hint ?? "JPEG, PNG or PDF"}</span>
         </span>
         {file && <CheckCircle2 className="h-5 w-5 shrink-0 text-moss" />}

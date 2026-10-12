@@ -225,7 +225,7 @@ function Onboarding() {
           </div>
           <div className="flex gap-3 rounded-2xl bg-oat/60 p-4 text-sm text-bark-soft">
             <Smartphone className="h-5 w-5 shrink-0 text-moss" />
-            <p>We’ll text a 6-digit code to an Indian mobile number. Each number can be used on one account.</p>
+            <p>Use an Indian mobile number. Each number can be used on one account.</p>
           </div>
           <PhoneOtp
             mode="link"
@@ -261,6 +261,7 @@ function Onboarding() {
               file={photo}
               onChange={setPhoto}
               accept="image/*"
+              prompt="Choose a photo"
               hint={hasOwnPhoto(profile?.photoURL) ? "You already added one. Choose another to replace it." : "A clear photo of your face. Parents see it on your profile."}
             />
           )}
